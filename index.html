@@ -171,6 +171,24 @@
       font-family: 'IBM Plex Mono', monospace;
     }
 
+    /* ─── Loading progress ─── */
+    .progress-wrap {
+      width: 240px;
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 0.5rem;
+    }
+
+    .progress-bar {
+      height: 100%;
+      background: var(--amber);
+      border-radius: 2px;
+      transition: width 0.25s ease;
+      width: 0%;
+    }
+
     /* ─── Results ─── */
     .results-header {
       display: flex;
@@ -382,8 +400,647 @@
   <div id="results-container">
     <div class="state" id="idle-state">
       <div class="state-icon">🎙️</div>
-      <p class="state-title">Start typing to search</p>
-      <p class="state-body" id="index-status">Loading index…</p>
+      <p class="state-title" id="load-title">Loading index…</p>
+      <p class="state-body" id="index-status">Fetching manifest</p>
+      <div class="progress-wrap" id="progress-wrap">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  Client-side full-text search · Powered by Lunr.js · No data leaves your browser
+</footer>
+
+<script>
+(async () => {
+  const input      = document.getElementById('search-input');
+  const container  = document.getElementById('results-container');
+  const metaEl     = document.getElementById('search-meta');
+  const statusEl   = document.getElementById('index-status');
+  const loadTitle  = document.getElementById('load-title');
+  const progressWrap = document.getElementById('progress-wrap');
+  const progressBar  = document.getElementById('progress-bar');
+
+  const PAGE_SIZE  = 20;
+  const CTX_WINDOW = 2;
+
+  let lunrIndex   = null;
+  let episodesMap = {};
+  let entriesMap  = {};
+  let allResults  = [];
+  let page        = 0;
+
+  // ── Progress helpers ──────────────────────────────────────────
+  function setProgress(loaded, total) {
+    const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
+    progressBar.style.width = pct + '%';
+    statusEl.textContent = `Loading chunks… ${loaded}/${total}`;
+  }
+
+  function hideProgress() {
+    progressWrap.style.transition = 'opacity 0.4s';
+    progressWrap.style.opacity = '0';
+    setTimeout(() => { progressWrap.style.display = 'none'; }, 400);
+  }
+
+  // ── Load all chunks in parallel ───────────────────────────────
+  try {
+    // 1. Fetch manifest
+    statusEl.textContent = 'Fetching manifest…';
+    const mResp = await fetch('search-index/manifest.json');
+    if (!mResp.ok) throw new Error(`Manifest HTTP ${mResp.status}`);
+    const manifest = await mResp.json();
+
+    const { chunks, total_episodes, total_entries } = manifest;
+    setProgress(0, chunks.length);
+
+    // 2. Fetch all chunks in parallel, update progress as each resolves
+    let loaded = 0;
+    const chunkData = await Promise.all(
+      chunks.map(url =>
+        fetch(url)
+          .then(r => { if (!r.ok) throw new Error(`Chunk HTTP ${r.status}: ${url}`); return r.json(); })
+          .then(data => { loaded++; setProgress(loaded, chunks.length); return data; })
+      )
+    );
+
+    // 3. Merge chunks into shared maps
+    statusEl.textContent = 'Building search index…';
+    progressBar.style.width = '100%';
+
+    const allEntries = [];
+    for (const chunk of chunkData) {
+      Object.assign(episodesMap, chunk.episodes);
+      for (const e of chunk.entries) {
+        entriesMap[e.id] = e;
+        allEntries.push(e);
+      }
+    }
+
+    // 4. Build Lunr index
+    lunrIndex = lunr(function () {
+      this.ref('id');
+      this.field('t', { boost: 10 });
+      this.field('e', { boost: 3  });
+      this.metadataWhitelist = ['position'];
+      allEntries.forEach(e => this.add(e));
+    });
+
+    // 5. Ready
+    hideProgress();
+    loadTitle.textContent = 'Start typing to search';
+    statusEl.textContent  = `${allEntries.length.toLocaleString()} blocks · ${total_episodes} episodes`;
+    input.placeholder     = `Search ${total_episodes} podcast transcripts…`;
+    input.disabled        = false;
+    input.focus();
+
+  } catch (err) {
+    loadTitle.textContent  = 'Failed to load index';
+    statusEl.textContent   = err.message;
+    progressBar.style.background = '#c0392b';
+    console.error('Search index load error:', err);
+  }
+
+  // ── Context lookup ────────────────────────────────────────────
+  function getContext(entryId) {
+    const sep   = entryId.lastIndexOf('::');
+    const fname = entryId.substring(0, sep);
+    const idx   = parseInt(entryId.substring(sep + 2), 10);
+    const ep    = episodesMap[fname];
+    if (!ep) return [];
+    const start = Math.max(0, idx - CTX_WINDOW);
+    const end   = Math.min(ep.blocks.length - 1, idx + CTX_WINDOW);
+    return ep.blocks.slice(start, end + 1).map((blk, offset) => ({
+      ...blk,
+      isMatch: (start + offset) === idx,
+    }));
+  }
+
+  // ── Search ────────────────────────────────────────────────────
+  function search(query) {
+    if (!lunrIndex || !query.trim()) return [];
+    try {
+      let results = lunrIndex.search(query);
+      if (!results.length) {
+        const terms = query.trim().split(/\s+/).map(t => `${t}*`).join(' ');
+        results = lunrIndex.search(terms);
+      }
+      return results;
+    } catch { return []; }
+  }
+
+  // ── Highlight ─────────────────────────────────────────────────
+  function highlight(text, terms) {
+    if (!terms?.length) return escapeHtml(text);
+    const re = new RegExp(`(${terms.map(escapeRe).join('|')})`, 'gi');
+    return escapeHtml(text).replace(re, '<mark>$1</mark>');
+  }
+  function escapeHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+  function escapeRe(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+  function getMatchedTerms(results) {
+    const terms = new Set();
+    results.slice(0, PAGE_SIZE).forEach(r => {
+      if (r.matchData?.metadata)
+        Object.keys(r.matchData.metadata).forEach(t => terms.add(t));
+    });
+    return [...terms];
+  }
+
+  // ── Render ────────────────────────────────────────────────────
+  function renderBatch(results, terms, append = false) {
+    if (!append) {
+      container.innerHTML = '';
+      if (!results.length) {
+        container.innerHTML = `
+          <div class="state">
+            <div class="state-icon">🔍</div>
+            <p class="state-title">No results found</p>
+            <p class="state-body">Try different keywords or a shorter phrase</p>
+          </div>`;
+        return;
+      }
+      const hdr = document.createElement('div');
+      hdr.className = 'results-header';
+      hdr.innerHTML = `
+        <span class="results-count">${results.length.toLocaleString()} result${results.length !== 1 ? 's' : ''}</span>
+        <span class="results-query">"${escapeHtml(input.value.trim())}"</span>`;
+      container.appendChild(hdr);
+      const list = document.createElement('div');
+      list.className = 'results-list';
+      list.id = 'results-list';
+      container.appendChild(list);
+    }
+
+    const list  = container.querySelector('#results-list');
+    const batch = results.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+    batch.forEach((r, batchIdx) => {
+      const entry   = entriesMap[r.ref];
+      if (!entry) return;
+      const context = getContext(r.ref);
+      const card    = document.createElement('div');
+      card.className = 'result-card';
+      card.style.animationDelay = `${batchIdx * 20}ms`;
+
+      const ctxHtml = context.map(blk => `
+        <div class="context-block ${blk.isMatch ? 'is-match' : ''}">
+          <span class="block-ts">${blk.s}</span>
+          <span class="block-text">${blk.isMatch ? highlight(blk.t, terms) : escapeHtml(blk.t)}</span>
+        </div>`).join('');
+
+      card.innerHTML = `
+        <div class="card-header">
+          <span class="episode-dot"></span>
+          <span class="episode-name">${escapeHtml(entry.e)}</span>
+          <span class="episode-ts">${context.find(b => b.isMatch)?.s ?? ''}</span>
+        </div>
+        <div class="context-blocks">${ctxHtml}</div>`;
+      list.appendChild(card);
+    });
+
+    document.getElementById('load-more-btn')?.parentElement.remove();
+    if ((page + 1) * PAGE_SIZE < results.length) {
+      const wrap = document.createElement('div');
+      wrap.className = 'load-more-wrap';
+      wrap.innerHTML = `<button id="load-more-btn">Load more results</button>`;
+      container.appendChild(wrap);
+      document.getElementById('load-more-btn').addEventListener('click', () => {
+        page++;
+        renderBatch(allResults, terms, true);
+      });
+    }
+  }
+
+  // ── Debounced input ───────────────────────────────────────────
+  let debounceTimer;
+  input.addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      const q = input.value.trim();
+      if (!q) {
+        container.innerHTML = `
+          <div class="state">
+            <div class="state-icon">🎙️</div>
+            <p class="state-title">Start typing to search</p>
+            <p class="state-body">${statusEl.textContent}</p>
+          </div>`;
+        metaEl.textContent = '';
+        return;
+      }
+      const t0 = performance.now();
+      allResults = search(q);
+      const elapsed = (performance.now() - t0).toFixed(1);
+      page = 0;
+      renderBatch(allResults, getMatchedTerms(allResults), false);
+      metaEl.textContent = allResults.length > 0 ? `${allResults.length} · ${elapsed}ms` : '0 results';
+    }, 180);
+  });
+
+})();
+</script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #141210;
+      --surface:   #1e1a17;
+      --border:    #2e2820;
+      --border-hi: #4a3e30;
+      --amber:     #e8a435;
+      --amber-dim: #a0711f;
+      --amber-glow:#e8a43522;
+      --cream:     #f0e6d0;
+      --muted:     #7a6e60;
+      --text:      #cfc4b4;
+      --match-bg:  #2a2015;
+      --match-hl:  #e8a43530;
+      --radius:    6px;
+    }
+
+    html { font-size: 16px; scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Fraunces', Georgia, serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ─── Noise texture overlay ─── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.5;
+    }
+
+    /* ─── Header ─── */
+    header {
+      position: relative;
+      z-index: 1;
+      border-bottom: 1px solid var(--border);
+      padding: 3rem 2rem 2.5rem;
+      text-align: center;
+    }
+
+    .header-eyebrow {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.7rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--amber);
+      margin-bottom: 0.75rem;
+    }
+
+    h1 {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: clamp(2rem, 5vw, 3.5rem);
+      font-weight: 700;
+      color: var(--cream);
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+    }
+
+    h1 em {
+      font-style: italic;
+      color: var(--amber);
+    }
+
+    .header-sub {
+      margin-top: 0.75rem;
+      color: var(--muted);
+      font-style: italic;
+      font-size: 1rem;
+      font-weight: 300;
+    }
+
+    /* ─── Search bar ─── */
+    .search-wrap {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 1.5rem;
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      backdrop-filter: blur(8px);
+    }
+
+    .search-icon {
+      color: var(--amber-dim);
+      flex-shrink: 0;
+      width: 18px;
+      height: 18px;
+    }
+
+    #search-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--cream);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 1rem;
+      caret-color: var(--amber);
+    }
+
+    #search-input::placeholder { color: var(--muted); }
+
+    .search-meta {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.72rem;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    /* ─── Main layout ─── */
+    main {
+      position: relative;
+      z-index: 1;
+      max-width: 860px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 2rem 1.5rem 4rem;
+      flex: 1;
+    }
+
+    /* ─── States ─── */
+    .state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 5rem 2rem;
+      color: var(--muted);
+      text-align: center;
+      animation: fadeIn 0.3s ease;
+    }
+
+    .state-icon {
+      font-size: 2.5rem;
+      opacity: 0.4;
+    }
+
+    .state-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.2rem;
+      font-style: italic;
+      color: var(--text);
+    }
+
+    .state-body {
+      font-size: 0.9rem;
+      font-family: 'IBM Plex Mono', monospace;
+    }
+
+    /* ─── Loading progress ─── */
+    .progress-wrap {
+      width: 240px;
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 0.5rem;
+    }
+
+    .progress-bar {
+      height: 100%;
+      background: var(--amber);
+      border-radius: 2px;
+      transition: width 0.25s ease;
+      width: 0%;
+    }
+
+    /* ─── Results ─── */
+    .results-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 1.25rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .results-count {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.75rem;
+      color: var(--amber);
+      letter-spacing: 0.05em;
+    }
+
+    .results-query {
+      font-style: italic;
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+
+    .results-list {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+
+    /* ─── Result card ─── */
+    .result-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      animation: slideUp 0.25s ease backwards;
+    }
+
+    .result-card:hover {
+      border-color: var(--border-hi);
+    }
+
+    .result-card + .result-card {
+      margin-top: 0.75rem;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.65rem 1rem;
+      border-bottom: 1px solid var(--border);
+      background: #1a1510;
+    }
+
+    .episode-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--amber);
+      flex-shrink: 0;
+    }
+
+    .episode-name {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.78rem;
+      color: var(--amber);
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .episode-ts {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.7rem;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+
+    .context-blocks {
+      padding: 0.75rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .context-block {
+      display: flex;
+      gap: 0.75rem;
+      padding: 0.45rem 0.5rem;
+      border-radius: 3px;
+      transition: background 0.15s;
+    }
+
+    .context-block.is-match {
+      background: var(--match-hl);
+      border-left: 2px solid var(--amber);
+      padding-left: 0.625rem;
+    }
+
+    .block-ts {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.65rem;
+      color: var(--muted);
+      flex-shrink: 0;
+      padding-top: 0.1em;
+      width: 5.5rem;
+      text-align: right;
+    }
+
+    .block-text {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.82rem;
+      line-height: 1.6;
+      color: var(--text);
+    }
+
+    .context-block.is-match .block-text {
+      color: var(--cream);
+    }
+
+    mark {
+      background: var(--amber-glow);
+      color: var(--amber);
+      border-radius: 2px;
+      padding: 0 2px;
+      font-weight: 500;
+    }
+
+    /* ─── Load more ─── */
+    .load-more-wrap {
+      margin-top: 2rem;
+      text-align: center;
+    }
+
+    #load-more-btn {
+      background: transparent;
+      border: 1px solid var(--border-hi);
+      color: var(--amber);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.78rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      padding: 0.6rem 1.5rem;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s;
+    }
+
+    #load-more-btn:hover {
+      background: var(--amber-glow);
+      border-color: var(--amber-dim);
+    }
+
+    /* ─── Footer ─── */
+    footer {
+      position: relative;
+      z-index: 1;
+      border-top: 1px solid var(--border);
+      padding: 1.25rem;
+      text-align: center;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.68rem;
+      color: var(--muted);
+    }
+
+    /* ─── Animations ─── */
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ─── Responsive ─── */
+    @media (max-width: 600px) {
+      header { padding: 2rem 1.25rem 1.75rem; }
+      .block-ts { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <p class="header-eyebrow">Transcript Archive</p>
+  <h1>Search the <em>Archive</em></h1>
+  <p class="header-sub">Full-text search across all podcast transcripts</p>
+</header>
+
+<div class="search-wrap">
+  <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+  </svg>
+  <input
+    id="search-input"
+    type="search"
+    placeholder="Search transcripts…"
+    autocomplete="off"
+    spellcheck="false"
+  />
+  <span class="search-meta" id="search-meta"></span>
+</div>
+
+<main>
+  <div id="results-container">
+    <div class="state" id="idle-state">
+      <div class="state-icon">🎙️</div>
+      <p class="state-title" id="load-title">Loading index…</p>
+      <p class="state-body" id="index-status">Fetching manifest</p>
+      <div class="progress-wrap" id="progress-wrap">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
     </div>
   </div>
 </main>
