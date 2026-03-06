@@ -1,0 +1,10 @@
+{
+  "chunks": [
+    "search-index/chunk-000.json",
+    "search-index/chunk-001.json",
+    "search-index/chunk-002.json",
+    "search-index/chunk-003.json"
+  ],
+  "total_episodes": 474,
+  "total_entries": 489095
+}
