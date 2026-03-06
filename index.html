@@ -1,31 +1,32 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#141210">
+  <meta name="description" content="Full-text search across all podcast transcripts">
   <title>Podcast Transcript Search</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=IBM+Plex+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;1,9..144,300&display=swap" rel="stylesheet" />
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/lunr.js/2.3.9/lunr.min.js"></script>
-
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=IBM+Plex+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;1,9..144,300&display=swap&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg:        #141210;
-      --surface:   #1e1a17;
-      --border:    #2e2820;
-      --border-hi: #4a3e30;
-      --amber:     #e8a435;
-      --amber-dim: #a0711f;
-      --amber-glow:#e8a43522;
-      --cream:     #f0e6d0;
-      --muted:     #7a6e60;
-      --text:      #cfc4b4;
-      --match-bg:  #2a2015;
-      --match-hl:  #e8a43530;
-      --radius:    6px;
+      --bg:         #141210;
+      --surface:    #1e1a17;
+      --surface-hi: #231f1b;
+      --border:     #2e2820;
+      --border-hi:  #4a3e30;
+      --amber:      #e8a435;
+      --amber-dim:  #a0711f;
+      --amber-glow: #e8a43520;
+      --amber-hl:   #e8a43530;
+      --cream:      #f0e6d0;
+      --muted:      #7a6e60;
+      --text:       #cfc4b4;
+      --radius:     8px;
+      --search-h:   52px;
     }
 
     html { font-size: 16px; scroll-behavior: smooth; }
@@ -34,379 +35,431 @@
       background: var(--bg);
       color: var(--text);
       font-family: 'Fraunces', Georgia, serif;
-      min-height: 100vh;
+      min-height: 100svh;
       display: flex;
       flex-direction: column;
+      -webkit-tap-highlight-color: transparent;
+      overscroll-behavior-y: none;
     }
 
-    /* ─── Noise texture overlay ─── */
+    /* ── Grain overlay ──────────────────────────────────────────── */
     body::before {
       content: '';
-      position: fixed;
-      inset: 0;
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
-      pointer-events: none;
-      z-index: 0;
-      opacity: 0.5;
+      position: fixed; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+      pointer-events: none; z-index: 0; opacity: 0.6;
     }
 
-    /* ─── Header ─── */
+    /* ── Header ─────────────────────────────────────────────────── */
     header {
-      position: relative;
-      z-index: 1;
-      border-bottom: 1px solid var(--border);
-      padding: 3rem 2rem 2.5rem;
+      position: relative; z-index: 1;
+      padding: 2.75rem 1.5rem 2.25rem;
       text-align: center;
+      border-bottom: 1px solid var(--border);
+      transition: padding 0.3s ease, opacity 0.3s ease;
     }
+    body.has-query header { padding: 0.85rem 1.5rem; }
+    body.has-query .header-sub,
+    body.has-query .header-eyebrow { opacity: 0; height: 0; overflow: hidden; margin: 0; }
 
     .header-eyebrow {
       font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.7rem;
-      letter-spacing: 0.2em;
-      text-transform: uppercase;
-      color: var(--amber);
-      margin-bottom: 0.75rem;
+      font-size: 0.67rem; letter-spacing: 0.22em;
+      text-transform: uppercase; color: var(--amber);
+      margin-bottom: 0.55rem;
+      transition: opacity 0.2s, height 0.3s;
     }
-
     h1 {
       font-family: 'Playfair Display', Georgia, serif;
-      font-size: clamp(2rem, 5vw, 3.5rem);
-      font-weight: 700;
-      color: var(--cream);
-      line-height: 1.1;
-      letter-spacing: -0.02em;
+      font-size: clamp(1.8rem, 5vw, 3.2rem);
+      font-weight: 700; color: var(--cream);
+      line-height: 1.1; letter-spacing: -0.02em;
+      transition: font-size 0.3s ease;
     }
-
-    h1 em {
-      font-style: italic;
-      color: var(--amber);
-    }
-
+    body.has-query h1 { font-size: clamp(1.1rem, 2.5vw, 1.4rem); }
+    h1 em { font-style: italic; color: var(--amber); }
     .header-sub {
-      margin-top: 0.75rem;
-      color: var(--muted);
-      font-style: italic;
-      font-size: 1rem;
-      font-weight: 300;
+      margin-top: 0.55rem; color: var(--muted);
+      font-style: italic; font-size: 0.95rem; font-weight: 300;
+      transition: opacity 0.2s, height 0.3s;
     }
 
-    /* ─── Search bar ─── */
+    /* ── Search bar ─────────────────────────────────────────────── */
     .search-wrap {
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      background: var(--bg);
+      position: sticky; top: 0; z-index: 10;
+      background: rgba(20,18,16,0.96);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
       border-bottom: 1px solid var(--border);
-      padding: 1rem 1.5rem;
-      display: flex;
-      gap: 0.75rem;
-      align-items: center;
-      backdrop-filter: blur(8px);
+      padding: 0.5rem 0.875rem;
+      display: flex; align-items: center; gap: 0.5rem;
     }
-
     .search-icon {
-      color: var(--amber-dim);
-      flex-shrink: 0;
-      width: 18px;
-      height: 18px;
+      color: var(--amber-dim); flex-shrink: 0;
+      width: 17px; height: 17px; pointer-events: none;
     }
-
     #search-input {
-      flex: 1;
-      background: transparent;
-      border: none;
-      outline: none;
+      flex: 1; min-width: 0;
+      background: transparent; border: none; outline: none;
       color: var(--cream);
       font-family: 'IBM Plex Mono', monospace;
-      font-size: 1rem;
+      font-size: 16px; /* prevents iOS Safari zoom-on-focus */
+      height: var(--search-h);
       caret-color: var(--amber);
     }
-
     #search-input::placeholder { color: var(--muted); }
+    #search-input::-webkit-search-cancel-button { display: none; }
+
+    #clear-btn {
+      display: none; align-items: center; justify-content: center;
+      width: 30px; height: 30px; flex-shrink: 0;
+      background: var(--border); border: none;
+      border-radius: 50%; cursor: pointer;
+      color: var(--muted); font-size: 0.9rem;
+      transition: background 0.15s, color 0.15s;
+      touch-action: manipulation;
+    }
+    #clear-btn:hover { background: var(--border-hi); color: var(--cream); }
+    #clear-btn.visible { display: flex; }
+
+    .kbd-hint {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.63rem; color: var(--muted);
+      border: 1px solid var(--border); border-radius: 3px;
+      padding: 1px 5px; flex-shrink: 0;
+      pointer-events: none; user-select: none;
+    }
+    body.has-query .kbd-hint { display: none; }
 
     .search-meta {
       font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.72rem;
-      color: var(--muted);
+      font-size: 0.67rem; color: var(--muted);
+      white-space: nowrap; flex-shrink: 0;
+      min-width: 5rem; text-align: right;
+    }
+
+    /* ── Recent searches ────────────────────────────────────────── */
+    #recents-bar {
+      display: none;
+      position: sticky; top: calc(var(--search-h) + 1rem + 2px);
+      z-index: 9;
+      padding: 0.5rem 1rem;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      background: rgba(20,18,16,0.92);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+    #recents-bar.visible { display: flex; }
+    .recents-label {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.62rem; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.1em;
       white-space: nowrap;
     }
+    .recent-chip {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.72rem; color: var(--text);
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 20px; padding: 3px 10px;
+      cursor: pointer; white-space: nowrap;
+      touch-action: manipulation;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
+    }
+    .recent-chip:hover { border-color: var(--amber-dim); color: var(--amber); background: var(--amber-glow); }
 
-    /* ─── Main layout ─── */
+    /* ── Main ───────────────────────────────────────────────────── */
     main {
-      position: relative;
-      z-index: 1;
-      max-width: 860px;
-      width: 100%;
-      margin: 0 auto;
-      padding: 2rem 1.5rem 4rem;
+      position: relative; z-index: 1;
       flex: 1;
+      max-width: 900px; width: 100%;
+      margin: 0 auto;
+      padding: 1.5rem 1.25rem 4rem;
     }
 
-    /* ─── States ─── */
+    /* ── States ─────────────────────────────────────────────────── */
     .state {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 0.75rem;
-      padding: 5rem 2rem;
-      color: var(--muted);
-      text-align: center;
+      display: flex; flex-direction: column;
+      align-items: center; gap: 0.7rem;
+      padding: 4rem 1.5rem; text-align: center;
       animation: fadeIn 0.3s ease;
     }
-
-    .state-icon {
-      font-size: 2.5rem;
-      opacity: 0.4;
-    }
-
+    .state-icon { font-size: 2.25rem; opacity: 0.35; }
     .state-title {
       font-family: 'Playfair Display', serif;
-      font-size: 1.2rem;
-      font-style: italic;
-      color: var(--text);
+      font-size: 1.2rem; font-style: italic; color: var(--text);
     }
-
     .state-body {
-      font-size: 0.9rem;
       font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.78rem; color: var(--muted);
     }
 
-    /* ─── Loading progress ─── */
+    /* ── Progress bar ───────────────────────────────────────────── */
     .progress-wrap {
-      width: 240px;
-      height: 3px;
-      background: var(--border);
-      border-radius: 2px;
-      overflow: hidden;
-      margin-top: 0.5rem;
+      width: 220px; height: 2px;
+      background: var(--border); border-radius: 2px;
+      overflow: hidden; margin-top: 0.4rem;
     }
-
     .progress-bar {
-      height: 100%;
-      background: var(--amber);
-      border-radius: 2px;
-      transition: width 0.25s ease;
-      width: 0%;
+      height: 100%; background: var(--amber); border-radius: 2px;
+      width: 0%; transition: width 0.25s ease;
     }
+    @keyframes shimmer { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+    .progress-bar.indeterminate { width: 35%; animation: shimmer 1.4s ease-in-out infinite; }
 
-    /* ─── Results ─── */
+    /* ── Skeleton cards ─────────────────────────────────────────── */
+    .skeleton-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); overflow: hidden; margin-bottom: 0.75rem;
+    }
+    .skeleton-header { height: 40px; background: var(--surface-hi); border-bottom: 1px solid var(--border); }
+    .skeleton-body { padding: 0.875rem; display: flex; flex-direction: column; gap: 0.45rem; }
+    .skeleton-line {
+      height: 11px; background: var(--border); border-radius: 3px;
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+    .skeleton-line.w-90 { width: 90%; } .skeleton-line.w-75 { width: 75%; }
+    .skeleton-line.w-60 { width: 60%; } .skeleton-line.w-85 { width: 85%; }
+    @keyframes pulse { 0%,100% { opacity: 0.35; } 50% { opacity: 0.75; } }
+
+    /* ── Results header ─────────────────────────────────────────── */
     .results-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      margin-bottom: 1.25rem;
-      padding-bottom: 0.75rem;
+      display: flex; justify-content: space-between;
+      align-items: baseline; flex-wrap: wrap; gap: 0.4rem;
+      margin-bottom: 1rem; padding-bottom: 0.65rem;
       border-bottom: 1px solid var(--border);
     }
-
     .results-count {
       font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.75rem;
-      color: var(--amber);
-      letter-spacing: 0.05em;
+      font-size: 0.71rem; color: var(--amber); letter-spacing: 0.05em;
     }
+    .results-query { font-style: italic; font-size: 0.86rem; color: var(--muted); }
 
-    .results-query {
-      font-style: italic;
-      font-size: 0.9rem;
-      color: var(--muted);
-    }
-
-    .results-list {
-      display: flex;
-      flex-direction: column;
-      gap: 1px;
-    }
-
-    /* ─── Result card ─── */
-    .result-card {
+    /* ── Episode cards ──────────────────────────────────────────── */
+    .ep-card {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      overflow: hidden;
-      animation: slideUp 0.25s ease backwards;
+      overflow: hidden; margin-bottom: 0.65rem;
+      /* Skip layout/paint for off-screen cards */
+      content-visibility: auto;
+      contain-intrinsic-size: auto 120px;
+      contain: layout style;
+      animation: slideUp 0.2s ease backwards;
+      transition: border-color 0.15s;
     }
+    .ep-card:hover { border-color: var(--border-hi); }
 
-    .result-card:hover {
-      border-color: var(--border-hi);
-    }
-
-    .result-card + .result-card {
-      margin-top: 0.75rem;
-    }
-
-    .card-header {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      padding: 0.65rem 1rem;
+    .ep-card-header {
+      display: flex; align-items: center; gap: 0.6rem;
+      padding: 0.55rem 0.875rem;
+      background: var(--surface-hi);
       border-bottom: 1px solid var(--border);
-      background: #1a1510;
+      min-height: 44px;
     }
-
-    .episode-dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--amber);
-      flex-shrink: 0;
+    .ep-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--amber); flex-shrink: 0;
     }
-
-    .episode-name {
+    .ep-name {
       font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.78rem;
-      color: var(--amber);
-      flex: 1;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      font-size: 0.76rem; color: var(--amber);
+      flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-
-    .episode-ts {
+    .ep-match-badge {
       font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.7rem;
-      color: var(--muted);
-      flex-shrink: 0;
+      font-size: 0.63rem; color: var(--bg);
+      background: var(--amber-dim);
+      padding: 2px 7px; border-radius: 10px;
+      white-space: nowrap; flex-shrink: 0;
     }
 
-    .context-blocks {
-      padding: 0.75rem 1rem;
-      display: flex;
-      flex-direction: column;
-      gap: 0;
+    /* ── Match groups ───────────────────────────────────────────── */
+    .match-group {
+      padding: 0.5rem 0.75rem;
+      border-top: 1px solid var(--border);
     }
+    .match-group:first-child { border-top: none; }
 
-    .context-block {
-      display: flex;
-      gap: 0.75rem;
-      padding: 0.45rem 0.5rem;
+    .ctx-line {
+      display: flex; gap: 0.65rem;
+      padding: 0.28rem 0.35rem;
       border-radius: 3px;
-      transition: background 0.15s;
     }
-
-    .context-block.is-match {
-      background: var(--match-hl);
+    .ctx-line.is-match {
+      background: var(--amber-hl);
       border-left: 2px solid var(--amber);
-      padding-left: 0.625rem;
+      padding-left: 0.45rem;
     }
 
-    .block-ts {
+    /* Timestamp: click to copy, shows tooltip */
+    .ctx-ts {
       font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.65rem;
-      color: var(--muted);
-      flex-shrink: 0;
-      padding-top: 0.1em;
-      width: 5.5rem;
-      text-align: right;
+      font-size: 0.64rem; color: var(--muted);
+      flex-shrink: 0; width: 4.2rem; text-align: right;
+      padding-top: 0.12em;
+      cursor: pointer; user-select: none;
+      position: relative; touch-action: manipulation;
+      transition: color 0.15s;
+      border-radius: 2px;
     }
+    .ctx-ts:hover { color: var(--amber); }
+    .ctx-ts::after {
+      content: attr(data-tip);
+      position: absolute; right: 0; top: -1.7rem;
+      background: var(--amber); color: var(--bg);
+      font-size: 0.59rem; padding: 2px 6px;
+      border-radius: 3px; white-space: nowrap;
+      pointer-events: none; opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .ctx-ts[data-copied]::after { opacity: 1; }
 
-    .block-text {
+    .ctx-text {
       font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.82rem;
-      line-height: 1.6;
-      color: var(--text);
+      font-size: 0.79rem; line-height: 1.65; color: var(--text);
     }
-
-    .context-block.is-match .block-text {
-      color: var(--cream);
-    }
+    .ctx-line.is-match .ctx-text { color: var(--cream); }
 
     mark {
-      background: var(--amber-glow);
-      color: var(--amber);
-      border-radius: 2px;
-      padding: 0 2px;
-      font-weight: 500;
+      background: var(--amber-glow); color: var(--amber);
+      border-radius: 2px; padding: 0 2px; font-weight: 500;
     }
 
-    /* ─── Load more ─── */
-    .load-more-wrap {
-      margin-top: 2rem;
-      text-align: center;
-    }
-
-    #load-more-btn {
-      background: transparent;
-      border: 1px solid var(--border-hi);
-      color: var(--amber);
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.78rem;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      padding: 0.6rem 1.5rem;
-      border-radius: var(--radius);
-      cursor: pointer;
-      transition: background 0.2s, border-color 0.2s;
-    }
-
-    #load-more-btn:hover {
-      background: var(--amber-glow);
-      border-color: var(--amber-dim);
-    }
-
-    /* ─── Footer ─── */
-    footer {
-      position: relative;
-      z-index: 1;
-      border-top: 1px solid var(--border);
-      padding: 1.25rem;
-      text-align: center;
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.68rem;
+    /* ── "Show more matches" ────────────────────────────────────── */
+    .more-matches-btn {
+      display: block; width: 100%; background: transparent;
+      border: none; border-top: 1px dashed var(--border);
       color: var(--muted);
+      font-family: 'IBM Plex Mono', monospace; font-size: 0.71rem;
+      padding: 0.5rem 1rem; text-align: center; cursor: pointer;
+      transition: color 0.15s, background 0.15s;
+      touch-action: manipulation;
+    }
+    .more-matches-btn:hover { color: var(--amber); background: var(--amber-glow); }
+
+    /* ── Infinite scroll sentinel ───────────────────────────────── */
+    #scroll-sentinel { height: 1px; margin-top: 1.5rem; visibility: hidden; }
+
+    /* ── Spinner ────────────────────────────────────────────────── */
+    .spinner {
+      width: 18px; height: 18px;
+      border: 2px solid var(--border); border-top-color: var(--amber);
+      border-radius: 50%; animation: spin 0.8s linear infinite; flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Footer ─────────────────────────────────────────────────── */
+    footer {
+      position: relative; z-index: 1;
+      border-top: 1px solid var(--border);
+      padding: 0.875rem 1.5rem;
+      padding-bottom: calc(0.875rem + env(safe-area-inset-bottom));
+      text-align: center;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.62rem; color: var(--muted);
     }
 
-    /* ─── Animations ─── */
-    @keyframes fadeIn {
-      from { opacity: 0; }
-      to   { opacity: 1; }
-    }
-
+    /* ── Animations ─────────────────────────────────────────────── */
+    @keyframes fadeIn  { from { opacity: 0; } to { opacity: 1; } }
     @keyframes slideUp {
-      from { opacity: 0; transform: translateY(8px); }
+      from { opacity: 0; transform: translateY(5px); }
       to   { opacity: 1; transform: translateY(0); }
     }
 
-    /* ─── Responsive ─── */
-    @media (max-width: 600px) {
-      header { padding: 2rem 1.25rem 1.75rem; }
-      .block-ts { display: none; }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
     }
+
+    /* ── Mobile ─────────────────────────────────────────────────── */
+    @media (max-width: 600px) {
+      main { padding: 1rem 0 3rem; }
+
+      /* Full-bleed cards on mobile */
+      .ep-card {
+        border-radius: 0; border-left: none; border-right: none;
+        margin-bottom: 0; border-bottom: none;
+      }
+      .ep-card + .ep-card { border-top: 1px solid var(--border); }
+
+      .match-group { padding: 0.45rem 0.75rem; }
+
+      /* On mobile, hide timestamp column but show inline before text */
+      .ctx-ts {
+        display: none;
+      }
+      /* Show timestamp inline as small prefix inside is-match lines */
+      .ctx-line.is-match .ctx-text::before {
+        content: attr(data-inline-ts);
+        color: var(--amber-dim);
+        margin-right: 0.4em;
+      }
+
+      .search-wrap { padding: 0.4rem 0.75rem; }
+      .results-header { padding: 0 1rem 0.65rem; }
+      #results-container { padding-top: 0.75rem; }
+      .ep-card-header { padding: 0.5rem 0.75rem; }
+
+      /* Slightly larger text on mobile for readability */
+      .ctx-text { font-size: 0.83rem; line-height: 1.7; }
+      .ep-name  { font-size: 0.78rem; }
+    }
+
+    @media (max-width: 380px) {
+      .ep-match-badge { display: none; }
+      .results-header { flex-direction: column; gap: 0.2rem; }
+    }
+
+    /* ── Focus ring ─────────────────────────────────────────────── */
+    :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
   </style>
 </head>
 <body>
 
-<header>
+<header id="site-header">
   <p class="header-eyebrow">Transcript Archive</p>
   <h1>Search the <em>Archive</em></h1>
   <p class="header-sub">Full-text search across all podcast transcripts</p>
 </header>
 
-<div class="search-wrap">
-  <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+<div class="search-wrap" role="search">
+  <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+       stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
   </svg>
   <input
-    id="search-input"
-    type="search"
+    id="search-input" type="search"
     placeholder="Search transcripts…"
-    autocomplete="off"
-    spellcheck="false"
-  />
-  <span class="search-meta" id="search-meta"></span>
+    autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+    aria-label="Search transcripts" disabled
+  >
+  <button id="clear-btn" aria-label="Clear search" title="Clear (Esc)">✕</button>
+  <span class="kbd-hint" aria-hidden="true">/</span>
+  <span class="search-meta" id="search-meta" aria-live="polite" aria-atomic="true"></span>
+</div>
+
+<!-- Recent searches bar (hidden until there are recents) -->
+<div id="recents-bar" aria-label="Recent searches">
+  <span class="recents-label">Recent</span>
 </div>
 
 <main>
-  <div id="results-container">
+  <div id="results-container" role="region" aria-label="Search results" aria-live="polite">
     <div class="state" id="idle-state">
-      <div class="state-icon">🎙️</div>
+      <div class="state-icon" aria-hidden="true">🎙️</div>
       <p class="state-title" id="load-title">Loading index…</p>
       <p class="state-body" id="index-status">Fetching manifest</p>
-      <div class="progress-wrap" id="progress-wrap">
-        <div class="progress-bar" id="progress-bar"></div>
+      <div class="progress-wrap" role="progressbar" aria-label="Loading progress">
+        <div class="progress-bar indeterminate" id="progress-bar"></div>
       </div>
     </div>
   </div>
+  <div id="scroll-sentinel" aria-hidden="true"></div>
 </main>
 
 <footer>
@@ -415,828 +468,571 @@
 
 <script>
 (async () => {
-  const input      = document.getElementById('search-input');
-  const container  = document.getElementById('results-container');
-  const metaEl     = document.getElementById('search-meta');
-  const statusEl   = document.getElementById('index-status');
-  const loadTitle  = document.getElementById('load-title');
-  const progressWrap = document.getElementById('progress-wrap');
-  const progressBar  = document.getElementById('progress-bar');
 
-  const PAGE_SIZE  = 20;
-  const CTX_WINDOW = 2;
+  // ── Constants ────────────────────────────────────────────────────
+  const PAGE_SIZE    = 12;   // episode groups per infinite-scroll page
+  const CTX_WIN      = 2;    // context blocks each side of a match
+  const MAX_SHOW     = 3;    // match groups shown before "show more"
+  const CACHE_SIZE   = 40;   // LRU query cache entries
+  const MAX_RECENTS  = 8;    // recent searches to remember
 
-  let lunrIndex   = null;
-  let episodesMap = {};
-  let entriesMap  = {};
-  let allResults  = [];
-  let page        = 0;
+  // ── DOM refs ─────────────────────────────────────────────────────
+  const input       = document.getElementById('search-input');
+  const clearBtn    = document.getElementById('clear-btn');
+  const container   = document.getElementById('results-container');
+  const metaEl      = document.getElementById('search-meta');
+  const statusEl    = document.getElementById('index-status');
+  const loadTitle   = document.getElementById('load-title');
+  const progressBar = document.getElementById('progress-bar');
+  const sentinel    = document.getElementById('scroll-sentinel');
+  const recentsBar  = document.getElementById('recents-bar');
 
-  // ── Progress helpers ──────────────────────────────────────────
-  function setProgress(loaded, total) {
-    const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
-    progressBar.style.width = pct + '%';
-    statusEl.textContent = `Loading chunks… ${loaded}/${total}`;
+  // ── State ─────────────────────────────────────────────────────────
+  let episodesMap   = {};    // fname → {name, blocks:[{s,t}]}
+  let entriesMap    = {};    // id → {f,e,t}
+  let worker        = null;
+  let searchSeq     = 0;
+  let currentGroups = [];
+  let page          = 0;
+  let indexReady    = false;
+  const resultCache = new Map();
+  const recentList  = [];    // in-memory recent searches
+
+  // ── Format timestamp HH:MM:SS → M:SS or H:MM:SS ─────────────────
+  function fmtTs(s) {
+    // s is "HH:MM:SS" from build script
+    const [h, m, sec] = s.split(':').map(Number);
+    if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+    return `${m}:${String(sec).padStart(2,'0')}`;
   }
 
-  function hideProgress() {
-    progressWrap.style.transition = 'opacity 0.4s';
-    progressWrap.style.opacity = '0';
-    setTimeout(() => { progressWrap.style.display = 'none'; }, 400);
+  // ── HTML escape ───────────────────────────────────────────────────
+  function esc(s) {
+    return String(s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
+
+  function highlight(text, terms) {
+    if (!terms?.length) return esc(text);
+    const re = new RegExp('(' + terms.map(escRe).join('|') + ')', 'gi');
+    return esc(text).replace(re, '<mark>$1</mark>');
   }
 
-  // ── Load all chunks in parallel ───────────────────────────────
-  try {
-    // 1. Fetch manifest
-    statusEl.textContent = 'Fetching manifest…';
-    const mResp = await fetch('search-index/manifest.json');
-    if (!mResp.ok) throw new Error(`Manifest HTTP ${mResp.status}`);
-    const manifest = await mResp.json();
+  // ── Inline Web Worker ─────────────────────────────────────────────
+  // Runs all Lunr work off the main thread.
+  // Supports BUILD (from entries), LOAD (from serialized), and SEARCH.
+  // Reports BUILD_PROGRESS so the UI can show a real percentage.
+  const WORKER_SRC = `
+importScripts('https://cdnjs.cloudflare.com/ajax/libs/lunr.js/2.3.9/lunr.min.js');
+let idx = null;
 
-    const { chunks, total_episodes, total_entries } = manifest;
-    setProgress(0, chunks.length);
+self.onmessage = function(e) {
+  var msg = e.data;
 
-    // 2. Fetch all chunks in parallel, update progress as each resolves
-    let loaded = 0;
-    const chunkData = await Promise.all(
-      chunks.map(url =>
-        fetch(url)
-          .then(r => { if (!r.ok) throw new Error(`Chunk HTTP ${r.status}: ${url}`); return r.json(); })
-          .then(data => { loaded++; setProgress(loaded, chunks.length); return data; })
-      )
-    );
-
-    // 3. Merge chunks into shared maps
-    statusEl.textContent = 'Building search index…';
-    progressBar.style.width = '100%';
-
-    const allEntries = [];
-    for (const chunk of chunkData) {
-      Object.assign(episodesMap, chunk.episodes);
-      for (const e of chunk.entries) {
-        entriesMap[e.id] = e;
-        allEntries.push(e);
-      }
+  if (msg.type === 'LOAD') {
+    // Fast path: load pre-serialized index from CI
+    try {
+      idx = lunr.Index.load(msg.serialized);
+      self.postMessage({type: 'READY', source: 'prebuilt'});
+    } catch(err) {
+      self.postMessage({type: 'LOAD_FAILED', message: err.message});
     }
 
-    // 4. Build Lunr index
-    lunrIndex = lunr(function () {
-      this.ref('id');
-      this.field('t', { boost: 10 });
-      this.field('e', { boost: 3  });
-      this.metadataWhitelist = ['position'];
-      allEntries.forEach(e => this.add(e));
-    });
+  } else if (msg.type === 'BUILD') {
+    // Fallback: build from entries (slower, but always works)
+    try {
+      var entries = msg.entries;
+      var total   = entries.length;
+      var BATCH   = 2000; // report progress every N entries
+      var builder = new lunr.Builder();
+      builder.ref('id');
+      builder.field('t', {boost: 10});
+      builder.field('e', {boost: 3});
+      // no metadataWhitelist — we highlight by regex, not position
 
-    // 5. Ready
-    hideProgress();
-    loadTitle.textContent = 'Start typing to search';
-    statusEl.textContent  = `${allEntries.length.toLocaleString()} blocks · ${total_episodes} episodes`;
-    input.placeholder     = `Search ${total_episodes} podcast transcripts…`;
-    input.disabled        = false;
-    input.focus();
+      for (var i = 0; i < total; i++) {
+        builder.add(entries[i]);
+        if ((i + 1) % BATCH === 0 || i === total - 1) {
+          self.postMessage({type:'BUILD_PROGRESS', done: i+1, total: total});
+        }
+      }
+      idx = builder.build();
+      self.postMessage({type: 'READY', source: 'built'});
+    } catch(err) {
+      self.postMessage({type: 'ERROR', message: err.message});
+    }
 
-  } catch (err) {
-    loadTitle.textContent  = 'Failed to load index';
-    statusEl.textContent   = err.message;
-    progressBar.style.background = '#c0392b';
-    console.error('Search index load error:', err);
+  } else if (msg.type === 'SEARCH') {
+    if (!idx) {
+      self.postMessage({type:'RESULTS', id:msg.id, results:[]});
+      return;
+    }
+    try {
+      var r = idx.search(msg.query);
+      if (!r.length) {
+        var wq = msg.query.trim().split(/\\s+/).map(function(t){ return t+'*'; }).join(' ');
+        try { r = idx.search(wq); } catch(_) {}
+      }
+      self.postMessage({type:'RESULTS', id:msg.id, results:r, query:msg.query});
+    } catch(ex) {
+      self.postMessage({type:'RESULTS', id:msg.id, results:[], query:msg.query});
+    }
+  }
+};`;
+
+  function createWorker() {
+    const blob = new Blob([WORKER_SRC], {type: 'application/javascript'});
+    const url  = URL.createObjectURL(blob);
+    const w    = new Worker(url);
+    URL.revokeObjectURL(url);
+    return w;
   }
 
-  // ── Context lookup ────────────────────────────────────────────
+  // ── Progress helpers ──────────────────────────────────────────────
+  function setProgress(loaded, total, label) {
+    progressBar.classList.remove('indeterminate');
+    progressBar.style.width = (total > 0 ? Math.round(loaded / total * 100) : 0) + '%';
+    statusEl.textContent = label || `Loading chunks… ${loaded} / ${total}`;
+  }
+
+  function setIndexingState(done, total) {
+    progressBar.classList.remove('indeterminate');
+    const pct = total > 0 ? Math.round(done / total * 100) : 0;
+    progressBar.style.width = pct + '%';
+    loadTitle.innerHTML = '<span style="display:inline-flex;align-items:center;gap:0.5rem"><span class="spinner"></span>Building index…</span>';
+    statusEl.textContent = total > 0
+      ? `${pct}% · ${done.toLocaleString()} / ${total.toLocaleString()} entries`
+      : 'Loading pre-built index…';
+  }
+
+  // ── Load manifest + chunks in parallel, then boot worker ─────────
+  try {
+    statusEl.textContent = 'Fetching manifest…';
+    const mResp = await fetch('search-index/manifest.json');
+    if (!mResp.ok) throw new Error(`Manifest: HTTP ${mResp.status}`);
+    const manifest = await mResp.json();
+    const { chunks, total_episodes, lunr_index } = manifest;
+
+    setProgress(0, chunks.length);
+
+    // Fetch all data chunks + pre-built index in parallel
+    let loadedChunks = 0;
+    const allEntries = [];
+
+    const chunkPromises = chunks.map(url =>
+      fetch(url)
+        .then(r => { if (!r.ok) throw new Error(`Chunk HTTP ${r.status}`); return r.json(); })
+        .then(data => {
+          Object.assign(episodesMap, data.episodes);
+          for (const e of data.entries) {
+            entriesMap[e.id] = e;
+            allEntries.push(e);
+          }
+          setProgress(++loadedChunks, chunks.length);
+        })
+    );
+
+    // Fetch pre-built Lunr index if CI produced one
+    let serializedIndex = null;
+    const lunrPromise = lunr_index
+      ? fetch(lunr_index)
+          .then(r => r.ok ? r.json() : null)
+          .then(data => { serializedIndex = data; })
+          .catch(() => { serializedIndex = null; })
+      : Promise.resolve();
+
+    await Promise.all([...chunkPromises, lunrPromise]);
+
+    // Boot worker
+    setIndexingState(0, 0);
+    worker = createWorker();
+
+    worker.onerror = err => {
+      loadTitle.textContent = '⚠ Worker error';
+      statusEl.textContent  = err.message;
+    };
+
+    worker.onmessage = ({ data: msg }) => {
+      if (msg.type === 'BUILD_PROGRESS') {
+        setIndexingState(msg.done, msg.total);
+
+      } else if (msg.type === 'LOAD_FAILED') {
+        // Pre-built index failed to load — fall back to building from entries
+        console.warn('Pre-built index load failed, building from entries:', msg.message);
+        setIndexingState(0, allEntries.length);
+        worker.postMessage({ type: 'BUILD', entries: allEntries });
+
+      } else if (msg.type === 'READY') {
+        indexReady = true;
+        // Smooth transition: fade out progress UI
+        const pw = document.querySelector('.progress-wrap');
+        if (pw) { pw.style.transition = 'opacity 0.35s'; pw.style.opacity = '0'; setTimeout(() => pw.remove(), 350); }
+        loadTitle.textContent = 'Start typing to search';
+        statusEl.textContent  = `${allEntries.length.toLocaleString()} blocks · ${total_episodes} episodes · ${msg.source === 'prebuilt' ? 'pre-built index ⚡' : 'index built'}`;
+        input.placeholder     = `Search ${total_episodes} podcast transcripts…`;
+        input.disabled        = false;
+        input.focus();
+        // Re-run if user already typed during load
+        if (input.value.trim()) triggerSearch(input.value.trim());
+        // Restore URL hash search
+        const hashQ = decodeURIComponent(location.hash.replace(/^#q=/, ''));
+        if (hashQ && !input.value) {
+          input.value = hashQ;
+          clearBtn.classList.add('visible');
+          document.body.classList.add('has-query');
+          triggerSearch(hashQ);
+        }
+
+      } else if (msg.type === 'RESULTS') {
+        if (msg.id !== searchSeq) return; // stale
+        const terms  = getTerms(msg.results);
+        const groups = groupByEpisode(msg.results);
+        currentGroups = groups;
+        currentGroups._terms = terms;
+        page = 0;
+        renderGroups(groups, terms, false);
+        const totalM = msg.results.length;
+        const meta   = groups.length > 0
+          ? `${totalM.toLocaleString()} hits · ${groups.length} ep${groups.length !== 1 ? 's' : ''}`
+          : '0 results';
+        metaEl.textContent = meta;
+
+        // Cache
+        if (resultCache.size >= CACHE_SIZE) resultCache.delete(resultCache.keys().next().value);
+        resultCache.set(msg.query, { groups, terms, meta });
+
+      } else if (msg.type === 'ERROR') {
+        loadTitle.textContent = '⚠ Index error';
+        statusEl.textContent  = msg.message;
+      }
+    };
+
+    // Use pre-built if available, else build from entries
+    if (serializedIndex) {
+      statusEl.textContent = 'Loading pre-built index…';
+      worker.postMessage({ type: 'LOAD', serialized: serializedIndex });
+    } else {
+      worker.postMessage({ type: 'BUILD', entries: allEntries });
+    }
+
+  } catch (err) {
+    loadTitle.textContent = '⚠ Failed to load';
+    statusEl.textContent  = err.message;
+    console.error(err);
+  }
+
+  // ── Context lookup ────────────────────────────────────────────────
   function getContext(entryId) {
     const sep   = entryId.lastIndexOf('::');
     const fname = entryId.substring(0, sep);
     const idx   = parseInt(entryId.substring(sep + 2), 10);
     const ep    = episodesMap[fname];
     if (!ep) return [];
-    const start = Math.max(0, idx - CTX_WINDOW);
-    const end   = Math.min(ep.blocks.length - 1, idx + CTX_WINDOW);
-    return ep.blocks.slice(start, end + 1).map((blk, offset) => ({
+    const start = Math.max(0, idx - CTX_WIN);
+    const end   = Math.min(ep.blocks.length - 1, idx + CTX_WIN);
+    return ep.blocks.slice(start, end + 1).map((blk, off) => ({
       ...blk,
-      isMatch: (start + offset) === idx,
+      ts: fmtTs(blk.s),
+      isMatch: (start + off) === idx,
     }));
   }
 
-  // ── Search ────────────────────────────────────────────────────
-  function search(query) {
-    if (!lunrIndex || !query.trim()) return [];
-    try {
-      let results = lunrIndex.search(query);
-      if (!results.length) {
-        const terms = query.trim().split(/\s+/).map(t => `${t}*`).join(' ');
-        results = lunrIndex.search(terms);
+  // ── Group results by episode ──────────────────────────────────────
+  function groupByEpisode(results) {
+    const order  = [];
+    const groups = new Map();
+    for (const r of results) {
+      const sep   = r.ref.lastIndexOf('::');
+      const fname = r.ref.substring(0, sep);
+      if (!groups.has(fname)) {
+        const entry = entriesMap[r.ref];
+        groups.set(fname, { fname, name: entry?.e ?? fname, matches: [] });
+        order.push(fname);
       }
-      return results;
-    } catch { return []; }
+      groups.get(fname).matches.push(r);
+    }
+    return order.map(f => groups.get(f));
   }
 
-  // ── Highlight ─────────────────────────────────────────────────
-  function highlight(text, terms) {
-    if (!terms?.length) return escapeHtml(text);
-    const re = new RegExp(`(${terms.map(escapeRe).join('|')})`, 'gi');
-    return escapeHtml(text).replace(re, '<mark>$1</mark>');
-  }
-  function escapeHtml(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-  function escapeRe(s) {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  }
-  function getMatchedTerms(results) {
+  // ── Extract matched terms ─────────────────────────────────────────
+  function getTerms(results) {
     const terms = new Set();
-    results.slice(0, PAGE_SIZE).forEach(r => {
+    results.slice(0, PAGE_SIZE * 6).forEach(r => {
       if (r.matchData?.metadata)
         Object.keys(r.matchData.metadata).forEach(t => terms.add(t));
     });
     return [...terms];
   }
 
-  // ── Render ────────────────────────────────────────────────────
-  function renderBatch(results, terms, append = false) {
+  // ── Render one match group (context lines) ────────────────────────
+  function renderMatchGroup(result, terms) {
+    const ctx = getContext(result.ref);
+    const lines = ctx.map(blk => {
+      const tsAttr   = `data-ts="${esc(blk.ts)}" data-tip="✓ copied" tabindex="0" role="button" title="Copy timestamp"`;
+      const tsHtml   = `<span class="ctx-ts" ${tsAttr}>${esc(blk.ts)}</span>`;
+      // For mobile: inline-ts injected via CSS ::before using data-inline-ts
+      const inlineTs = blk.isMatch ? ` data-inline-ts="${esc(blk.ts)}"` : '';
+      const txtHtml  = `<span class="ctx-text"${inlineTs}>${blk.isMatch ? highlight(blk.t, terms) : esc(blk.t)}</span>`;
+      return `<div class="ctx-line${blk.isMatch ? ' is-match' : ''}">${tsHtml}${txtHtml}</div>`;
+    }).join('');
+    return `<div class="match-group">${lines}</div>`;
+  }
+
+  // ── Render one episode card ───────────────────────────────────────
+  function renderEpCard(group, terms, animDelay) {
+    const { name, matches } = group;
+    const badge = matches.length > 1
+      ? `<span class="ep-match-badge">${matches.length} matches</span>` : '';
+    const visible = matches.slice(0, MAX_SHOW);
+    const hidden  = matches.length - visible.length;
+
+    let body = visible.map(r => renderMatchGroup(r, terms)).join('');
+    if (hidden > 0) {
+      const hiddenRefs = JSON.stringify(matches.slice(MAX_SHOW).map(r => r.ref));
+      body += `<button class="more-matches-btn"
+        data-refs='${esc(hiddenRefs)}'>
+        + ${hidden} more match${hidden !== 1 ? 'es' : ''} in this episode
+      </button>`;
+    }
+
+    const card = document.createElement('div');
+    card.className = 'ep-card';
+    card.style.animationDelay = animDelay + 'ms';
+    card.innerHTML = `
+      <div class="ep-card-header">
+        <span class="ep-dot" aria-hidden="true"></span>
+        <span class="ep-name" title="${esc(name)}">${esc(name)}</span>
+        ${badge}
+      </div>
+      ${body}`;
+    return card;
+  }
+
+  // ── Render a batch of episode groups ─────────────────────────────
+  function renderGroups(groups, terms, append) {
     if (!append) {
       container.innerHTML = '';
-      if (!results.length) {
+
+      if (!groups.length) {
         container.innerHTML = `
           <div class="state">
-            <div class="state-icon">🔍</div>
+            <div class="state-icon" aria-hidden="true">🔍</div>
             <p class="state-title">No results found</p>
-            <p class="state-body">Try different keywords or a shorter phrase</p>
+            <p class="state-body">Try fewer words, different spelling, or a shorter phrase</p>
           </div>`;
         return;
       }
+
       const hdr = document.createElement('div');
       hdr.className = 'results-header';
+      const totalM = groups.reduce((s, g) => s + g.matches.length, 0);
       hdr.innerHTML = `
-        <span class="results-count">${results.length.toLocaleString()} result${results.length !== 1 ? 's' : ''}</span>
-        <span class="results-query">"${escapeHtml(input.value.trim())}"</span>`;
+        <span class="results-count">${totalM.toLocaleString()} match${totalM !== 1 ? 'es' : ''} across ${groups.length} episode${groups.length !== 1 ? 's' : ''}</span>
+        <span class="results-query">"${esc(input.value.trim())}"</span>`;
       container.appendChild(hdr);
+
       const list = document.createElement('div');
-      list.className = 'results-list';
-      list.id = 'results-list';
+      list.id = 'ep-list';
       container.appendChild(list);
     }
 
-    const list  = container.querySelector('#results-list');
-    const batch = results.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-
-    batch.forEach((r, batchIdx) => {
-      const entry   = entriesMap[r.ref];
-      if (!entry) return;
-      const context = getContext(r.ref);
-      const card    = document.createElement('div');
-      card.className = 'result-card';
-      card.style.animationDelay = `${batchIdx * 20}ms`;
-
-      const ctxHtml = context.map(blk => `
-        <div class="context-block ${blk.isMatch ? 'is-match' : ''}">
-          <span class="block-ts">${blk.s}</span>
-          <span class="block-text">${blk.isMatch ? highlight(blk.t, terms) : escapeHtml(blk.t)}</span>
-        </div>`).join('');
-
-      card.innerHTML = `
-        <div class="card-header">
-          <span class="episode-dot"></span>
-          <span class="episode-name">${escapeHtml(entry.e)}</span>
-          <span class="episode-ts">${context.find(b => b.isMatch)?.s ?? ''}</span>
-        </div>
-        <div class="context-blocks">${ctxHtml}</div>`;
-      list.appendChild(card);
-    });
-
-    document.getElementById('load-more-btn')?.parentElement.remove();
-    if ((page + 1) * PAGE_SIZE < results.length) {
-      const wrap = document.createElement('div');
-      wrap.className = 'load-more-wrap';
-      wrap.innerHTML = `<button id="load-more-btn">Load more results</button>`;
-      container.appendChild(wrap);
-      document.getElementById('load-more-btn').addEventListener('click', () => {
-        page++;
-        renderBatch(allResults, terms, true);
-      });
-    }
+    const list  = document.getElementById('ep-list');
+    const frag  = document.createDocumentFragment();
+    const batch = groups.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+    batch.forEach((group, i) => frag.appendChild(renderEpCard(group, terms, i * 25)));
+    list.appendChild(frag);
   }
 
-  // ── Debounced input ───────────────────────────────────────────
-  let debounceTimer;
-  input.addEventListener('input', () => {
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      const q = input.value.trim();
-      if (!q) {
-        container.innerHTML = `
-          <div class="state">
-            <div class="state-icon">🎙️</div>
-            <p class="state-title">Start typing to search</p>
-            <p class="state-body">${statusEl.textContent}</p>
-          </div>`;
-        metaEl.textContent = '';
-        return;
-      }
-      const t0 = performance.now();
-      allResults = search(q);
-      const elapsed = (performance.now() - t0).toFixed(1);
+  // ── Infinite scroll ───────────────────────────────────────────────
+  const io = new IntersectionObserver(entries => {
+    if (!entries[0].isIntersecting) return;
+    if ((page + 1) * PAGE_SIZE >= currentGroups.length) return;
+    page++;
+    renderGroups(currentGroups, currentGroups._terms || [], true);
+  }, { rootMargin: '400px' });
+  io.observe(sentinel);
+
+  // ── Trigger search ─────────────────────────────────────────────
+  function triggerSearch(query) {
+    if (!query.trim()) { showIdle(); return; }
+
+    // Cache hit — instant render
+    if (resultCache.has(query)) {
+      const c = resultCache.get(query);
+      currentGroups = c.groups;
+      currentGroups._terms = c.terms;
       page = 0;
-      renderBatch(allResults, getMatchedTerms(allResults), false);
-      metaEl.textContent = allResults.length > 0 ? `${allResults.length} · ${elapsed}ms` : '0 results';
-    }, 180);
+      renderGroups(c.groups, c.terms, false);
+      metaEl.textContent = c.meta;
+      return;
+    }
+
+    if (!indexReady) { metaEl.textContent = 'Index loading…'; return; }
+
+    const id = ++searchSeq;
+    worker.postMessage({ type: 'SEARCH', id, query });
+
+    // Show skeletons immediately for perceived speed
+    showSkeletons();
+  }
+
+  function showSkeletons() {
+    // Replace results with skeleton cards while waiting for worker
+    if (container.querySelector('.ep-card')) {
+      // Don't flash skeletons if we already have results visible
+      return;
+    }
+    container.innerHTML = `
+      ${[...Array(3)].map(() => `
+        <div class="skeleton-card">
+          <div class="skeleton-header"></div>
+          <div class="skeleton-body">
+            <div class="skeleton-line w-90"></div>
+            <div class="skeleton-line w-75"></div>
+            <div class="skeleton-line w-85"></div>
+          </div>
+        </div>`).join('')}`;
+  }
+
+  // ── Idle / clear state ────────────────────────────────────────────
+  function showIdle() {
+    container.innerHTML = `
+      <div class="state">
+        <div class="state-icon" aria-hidden="true">🎙️</div>
+        <p class="state-title">Start typing to search</p>
+        <p class="state-body">${esc(statusEl?.textContent ?? '')}</p>
+      </div>`;
+    metaEl.textContent = '';
+    document.body.classList.remove('has-query');
+    history.replaceState(null, '', location.pathname);
+  }
+
+  // ── Recent searches ───────────────────────────────────────────────
+  function addRecent(query) {
+    if (!query || query.length < 2) return;
+    const idx = recentList.indexOf(query);
+    if (idx !== -1) recentList.splice(idx, 1);
+    recentList.unshift(query);
+    if (recentList.length > MAX_RECENTS) recentList.pop();
+    renderRecents();
+  }
+
+  function renderRecents() {
+    // Remove old chips
+    recentsBar.querySelectorAll('.recent-chip').forEach(c => c.remove());
+    if (!recentList.length) { recentsBar.classList.remove('visible'); return; }
+    const frag = document.createDocumentFragment();
+    recentList.forEach(q => {
+      const chip = document.createElement('button');
+      chip.className = 'recent-chip';
+      chip.textContent = q;
+      chip.addEventListener('click', () => {
+        input.value = q;
+        clearBtn.classList.add('visible');
+        document.body.classList.add('has-query');
+        triggerSearch(q);
+        input.focus();
+      });
+      frag.appendChild(chip);
+    });
+    recentsBar.appendChild(frag);
+    recentsBar.classList.add('visible');
+  }
+
+  // ── Input handler ─────────────────────────────────────────────────
+  let debounce;
+  input.addEventListener('input', () => {
+    clearTimeout(debounce);
+    const q = input.value;
+    clearBtn.classList.toggle('visible', q.length > 0);
+    document.body.classList.toggle('has-query', q.length > 0);
+    if (!q) { showIdle(); recentsBar.classList.toggle('visible', recentList.length > 0); return; }
+    recentsBar.classList.remove('visible');
+    debounce = setTimeout(() => {
+      triggerSearch(q.trim());
+      // Update URL hash for shareability
+      if (q.trim()) history.replaceState(null, '', '#q=' + encodeURIComponent(q.trim()));
+      // Save to recents after a pause (user seems committed)
+    }, 220);
   });
 
-})();
-</script>
+  // Save to recents on blur if there's a meaningful query with results
+  input.addEventListener('blur', () => {
+    const q = input.value.trim();
+    if (q && currentGroups.length > 0) addRecent(q);
+  });
 
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    :root {
-      --bg:        #141210;
-      --surface:   #1e1a17;
-      --border:    #2e2820;
-      --border-hi: #4a3e30;
-      --amber:     #e8a435;
-      --amber-dim: #a0711f;
-      --amber-glow:#e8a43522;
-      --cream:     #f0e6d0;
-      --muted:     #7a6e60;
-      --text:      #cfc4b4;
-      --match-bg:  #2a2015;
-      --match-hl:  #e8a43530;
-      --radius:    6px;
-    }
-
-    html { font-size: 16px; scroll-behavior: smooth; }
-
-    body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: 'Fraunces', Georgia, serif;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-    }
-
-    /* ─── Noise texture overlay ─── */
-    body::before {
-      content: '';
-      position: fixed;
-      inset: 0;
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
-      pointer-events: none;
-      z-index: 0;
-      opacity: 0.5;
-    }
-
-    /* ─── Header ─── */
-    header {
-      position: relative;
-      z-index: 1;
-      border-bottom: 1px solid var(--border);
-      padding: 3rem 2rem 2.5rem;
-      text-align: center;
-    }
-
-    .header-eyebrow {
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.7rem;
-      letter-spacing: 0.2em;
-      text-transform: uppercase;
-      color: var(--amber);
-      margin-bottom: 0.75rem;
-    }
-
-    h1 {
-      font-family: 'Playfair Display', Georgia, serif;
-      font-size: clamp(2rem, 5vw, 3.5rem);
-      font-weight: 700;
-      color: var(--cream);
-      line-height: 1.1;
-      letter-spacing: -0.02em;
-    }
-
-    h1 em {
-      font-style: italic;
-      color: var(--amber);
-    }
-
-    .header-sub {
-      margin-top: 0.75rem;
-      color: var(--muted);
-      font-style: italic;
-      font-size: 1rem;
-      font-weight: 300;
-    }
-
-    /* ─── Search bar ─── */
-    .search-wrap {
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      background: var(--bg);
-      border-bottom: 1px solid var(--border);
-      padding: 1rem 1.5rem;
-      display: flex;
-      gap: 0.75rem;
-      align-items: center;
-      backdrop-filter: blur(8px);
-    }
-
-    .search-icon {
-      color: var(--amber-dim);
-      flex-shrink: 0;
-      width: 18px;
-      height: 18px;
-    }
-
-    #search-input {
-      flex: 1;
-      background: transparent;
-      border: none;
-      outline: none;
-      color: var(--cream);
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 1rem;
-      caret-color: var(--amber);
-    }
-
-    #search-input::placeholder { color: var(--muted); }
-
-    .search-meta {
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.72rem;
-      color: var(--muted);
-      white-space: nowrap;
-    }
-
-    /* ─── Main layout ─── */
-    main {
-      position: relative;
-      z-index: 1;
-      max-width: 860px;
-      width: 100%;
-      margin: 0 auto;
-      padding: 2rem 1.5rem 4rem;
-      flex: 1;
-    }
-
-    /* ─── States ─── */
-    .state {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 0.75rem;
-      padding: 5rem 2rem;
-      color: var(--muted);
-      text-align: center;
-      animation: fadeIn 0.3s ease;
-    }
-
-    .state-icon {
-      font-size: 2.5rem;
-      opacity: 0.4;
-    }
-
-    .state-title {
-      font-family: 'Playfair Display', serif;
-      font-size: 1.2rem;
-      font-style: italic;
-      color: var(--text);
-    }
-
-    .state-body {
-      font-size: 0.9rem;
-      font-family: 'IBM Plex Mono', monospace;
-    }
-
-    /* ─── Loading progress ─── */
-    .progress-wrap {
-      width: 240px;
-      height: 3px;
-      background: var(--border);
-      border-radius: 2px;
-      overflow: hidden;
-      margin-top: 0.5rem;
-    }
-
-    .progress-bar {
-      height: 100%;
-      background: var(--amber);
-      border-radius: 2px;
-      transition: width 0.25s ease;
-      width: 0%;
-    }
-
-    /* ─── Results ─── */
-    .results-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      margin-bottom: 1.25rem;
-      padding-bottom: 0.75rem;
-      border-bottom: 1px solid var(--border);
-    }
-
-    .results-count {
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.75rem;
-      color: var(--amber);
-      letter-spacing: 0.05em;
-    }
-
-    .results-query {
-      font-style: italic;
-      font-size: 0.9rem;
-      color: var(--muted);
-    }
-
-    .results-list {
-      display: flex;
-      flex-direction: column;
-      gap: 1px;
-    }
-
-    /* ─── Result card ─── */
-    .result-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      overflow: hidden;
-      animation: slideUp 0.25s ease backwards;
-    }
-
-    .result-card:hover {
-      border-color: var(--border-hi);
-    }
-
-    .result-card + .result-card {
-      margin-top: 0.75rem;
-    }
-
-    .card-header {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      padding: 0.65rem 1rem;
-      border-bottom: 1px solid var(--border);
-      background: #1a1510;
-    }
-
-    .episode-dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--amber);
-      flex-shrink: 0;
-    }
-
-    .episode-name {
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.78rem;
-      color: var(--amber);
-      flex: 1;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .episode-ts {
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.7rem;
-      color: var(--muted);
-      flex-shrink: 0;
-    }
-
-    .context-blocks {
-      padding: 0.75rem 1rem;
-      display: flex;
-      flex-direction: column;
-      gap: 0;
-    }
-
-    .context-block {
-      display: flex;
-      gap: 0.75rem;
-      padding: 0.45rem 0.5rem;
-      border-radius: 3px;
-      transition: background 0.15s;
-    }
-
-    .context-block.is-match {
-      background: var(--match-hl);
-      border-left: 2px solid var(--amber);
-      padding-left: 0.625rem;
-    }
-
-    .block-ts {
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.65rem;
-      color: var(--muted);
-      flex-shrink: 0;
-      padding-top: 0.1em;
-      width: 5.5rem;
-      text-align: right;
-    }
-
-    .block-text {
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.82rem;
-      line-height: 1.6;
-      color: var(--text);
-    }
-
-    .context-block.is-match .block-text {
-      color: var(--cream);
-    }
-
-    mark {
-      background: var(--amber-glow);
-      color: var(--amber);
-      border-radius: 2px;
-      padding: 0 2px;
-      font-weight: 500;
-    }
-
-    /* ─── Load more ─── */
-    .load-more-wrap {
-      margin-top: 2rem;
-      text-align: center;
-    }
-
-    #load-more-btn {
-      background: transparent;
-      border: 1px solid var(--border-hi);
-      color: var(--amber);
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.78rem;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      padding: 0.6rem 1.5rem;
-      border-radius: var(--radius);
-      cursor: pointer;
-      transition: background 0.2s, border-color 0.2s;
-    }
-
-    #load-more-btn:hover {
-      background: var(--amber-glow);
-      border-color: var(--amber-dim);
-    }
-
-    /* ─── Footer ─── */
-    footer {
-      position: relative;
-      z-index: 1;
-      border-top: 1px solid var(--border);
-      padding: 1.25rem;
-      text-align: center;
-      font-family: 'IBM Plex Mono', monospace;
-      font-size: 0.68rem;
-      color: var(--muted);
-    }
-
-    /* ─── Animations ─── */
-    @keyframes fadeIn {
-      from { opacity: 0; }
-      to   { opacity: 1; }
-    }
-
-    @keyframes slideUp {
-      from { opacity: 0; transform: translateY(8px); }
-      to   { opacity: 1; transform: translateY(0); }
-    }
-
-    /* ─── Responsive ─── */
-    @media (max-width: 600px) {
-      header { padding: 2rem 1.25rem 1.75rem; }
-      .block-ts { display: none; }
-    }
-  </style>
-</head>
-<body>
-
-<header>
-  <p class="header-eyebrow">Transcript Archive</p>
-  <h1>Search the <em>Archive</em></h1>
-  <p class="header-sub">Full-text search across all podcast transcripts</p>
-</header>
-
-<div class="search-wrap">
-  <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-  </svg>
-  <input
-    id="search-input"
-    type="search"
-    placeholder="Search transcripts…"
-    autocomplete="off"
-    spellcheck="false"
-  />
-  <span class="search-meta" id="search-meta"></span>
-</div>
-
-<main>
-  <div id="results-container">
-    <div class="state" id="idle-state">
-      <div class="state-icon">🎙️</div>
-      <p class="state-title" id="load-title">Loading index…</p>
-      <p class="state-body" id="index-status">Fetching manifest</p>
-      <div class="progress-wrap" id="progress-wrap">
-        <div class="progress-bar" id="progress-bar"></div>
-      </div>
-    </div>
-  </div>
-</main>
-
-<footer>
-  Client-side full-text search · Powered by Lunr.js · No data leaves your browser
-</footer>
-
-<script>
-(async () => {
-  const input     = document.getElementById('search-input');
-  const container = document.getElementById('results-container');
-  const metaEl    = document.getElementById('search-meta');
-  const statusEl  = document.getElementById('index-status');
-
-  const PAGE_SIZE    = 20;
-  const CTX_WINDOW   = 2;   // blocks before/after match to show
-
-  let lunrIndex  = null;
-  let episodesMap = {};  // filename → { name, blocks: [{s,t}] }
-  let entriesMap  = {};  // id → { f, e, t }
-  let allResults  = [];
-  let page        = 0;
-
-  // ── Load & index ──────────────────────────────────────────────
-  try {
-    const resp = await fetch('search-data.json');
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const data = await resp.json();
-
-    episodesMap = data.episodes;
-    data.entries.forEach(e => { entriesMap[e.id] = e; });
-
-    // Build Lunr index from flat entries (fields: t=text, e=episode)
-    lunrIndex = lunr(function () {
-      this.ref('id');
-      this.field('t', { boost: 10 });
-      this.field('e', { boost: 3  });
-      this.metadataWhitelist = ['position'];
-      data.entries.forEach(e => this.add(e));
-    });
-
-    const epCount = Object.keys(episodesMap).length;
-    statusEl.textContent = `${data.entries.length.toLocaleString()} blocks · ${epCount} episodes`;
-    input.placeholder = `Search ${epCount} podcast transcripts…`;
-    input.disabled = false;
+  // ── Clear button ──────────────────────────────────────────────────
+  clearBtn.addEventListener('click', () => {
+    input.value = '';
+    clearBtn.classList.remove('visible');
+    document.body.classList.remove('has-query');
+    resultCache.clear();
+    showIdle();
     input.focus();
-  } catch (err) {
-    statusEl.textContent = '⚠ Could not load search-data.json';
-    console.error('Search index load error:', err);
-  }
+    if (recentList.length) recentsBar.classList.add('visible');
+  });
 
-  // ── Context lookup ────────────────────────────────────────────
-  // The entry ID is "filename::blockIndex" — use that to slice the episode's
-  // blocks array for surrounding context. No duplication in the JSON needed.
-  function getContext(entryId) {
-    const sep = entryId.lastIndexOf('::');
-    const fname = entryId.substring(0, sep);
-    const idx   = parseInt(entryId.substring(sep + 2), 10);
-    const ep    = episodesMap[fname];
-    if (!ep) return [];
-
-    const start = Math.max(0, idx - CTX_WINDOW);
-    const end   = Math.min(ep.blocks.length - 1, idx + CTX_WINDOW);
-    return ep.blocks.slice(start, end + 1).map((blk, offset) => ({
-      ...blk,
-      isMatch: (start + offset) === idx,
-    }));
-  }
-
-  // ── Search ────────────────────────────────────────────────────
-  function search(query) {
-    if (!lunrIndex || !query.trim()) return [];
-    try {
-      let results = lunrIndex.search(query);
-      if (results.length === 0) {
-        const terms = query.trim().split(/\s+/).map(t => `${t}*`).join(' ');
-        results = lunrIndex.search(terms);
-      }
-      return results;
-    } catch { return []; }
-  }
-
-  // ── Highlight ─────────────────────────────────────────────────
-  function highlight(text, terms) {
-    if (!terms || !terms.length) return escapeHtml(text);
-    const re = new RegExp(`(${terms.map(escapeRe).join('|')})`, 'gi');
-    return escapeHtml(text).replace(re, '<mark>$1</mark>');
-  }
-  function escapeHtml(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-  function escapeRe(s) {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  }
-
-  function getMatchedTerms(results) {
-    const terms = new Set();
-    results.slice(0, PAGE_SIZE).forEach(r => {
-      if (r.matchData?.metadata)
-        Object.keys(r.matchData.metadata).forEach(t => terms.add(t));
-    });
-    return [...terms];
-  }
-
-  // ── Render ────────────────────────────────────────────────────
-  function renderBatch(results, terms, append = false) {
-    if (!append) {
-      container.innerHTML = '';
-      if (!results.length) {
-        container.innerHTML = `
-          <div class="state">
-            <div class="state-icon">🔍</div>
-            <p class="state-title">No results found</p>
-            <p class="state-body">Try different keywords or a shorter phrase</p>
-          </div>`;
-        return;
-      }
-      const hdr = document.createElement('div');
-      hdr.className = 'results-header';
-      hdr.innerHTML = `
-        <span class="results-count">${results.length.toLocaleString()} result${results.length !== 1 ? 's' : ''}</span>
-        <span class="results-query">"${escapeHtml(input.value.trim())}"</span>`;
-      container.appendChild(hdr);
-      const list = document.createElement('div');
-      list.className = 'results-list';
-      list.id = 'results-list';
-      container.appendChild(list);
+  // ── Keyboard shortcuts ────────────────────────────────────────────
+  document.addEventListener('keydown', e => {
+    if (e.key === '/' && document.activeElement !== input && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault(); input.focus(); input.select();
     }
+    if (e.key === 'Escape' && document.activeElement === input) {
+      if (input.value) {
+        input.value = '';
+        clearBtn.classList.remove('visible');
+        document.body.classList.remove('has-query');
+        resultCache.clear();
+        showIdle();
+        if (recentList.length) recentsBar.classList.add('visible');
+      } else {
+        input.blur();
+      }
+    }
+  });
 
-    const list  = container.querySelector('#results-list');
-    const batch = results.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-
-    batch.forEach((r, idx) => {
-      const entry   = entriesMap[r.ref];
-      if (!entry) return;
-      const context = getContext(r.ref);
-
-      const card = document.createElement('div');
-      card.className = 'result-card';
-      card.style.animationDelay = `${idx * 20}ms`;
-
-      const ctxHtml = context.map(blk => `
-        <div class="context-block ${blk.isMatch ? 'is-match' : ''}">
-          <span class="block-ts">${blk.s}</span>
-          <span class="block-text">${blk.isMatch ? highlight(blk.t, terms) : escapeHtml(blk.t)}</span>
-        </div>`).join('');
-
-      card.innerHTML = `
-        <div class="card-header">
-          <span class="episode-dot"></span>
-          <span class="episode-name">${escapeHtml(entry.e)}</span>
-          <span class="episode-ts">${context.find(b => b.isMatch)?.s ?? ''}</span>
-        </div>
-        <div class="context-blocks">${ctxHtml}</div>`;
-
-      list.appendChild(card);
-    });
-
-    // Load more
-    document.getElementById('load-more-btn')?.parentElement.remove();
-    if ((page + 1) * PAGE_SIZE < results.length) {
-      const wrap = document.createElement('div');
-      wrap.className = 'load-more-wrap';
-      wrap.innerHTML = `<button id="load-more-btn">Load more results</button>`;
-      container.appendChild(wrap);
-      document.getElementById('load-more-btn').addEventListener('click', () => {
-        page++;
-        renderBatch(allResults, terms, true);
+  // ── Delegated click handlers ──────────────────────────────────────
+  container.addEventListener('click', async e => {
+    // "Show more matches" button
+    const moreBtn = e.target.closest('.more-matches-btn');
+    if (moreBtn) {
+      const refs  = JSON.parse(moreBtn.dataset.refs);
+      const terms = currentGroups._terms || [];
+      const frag  = document.createDocumentFragment();
+      refs.forEach(ref => {
+        const wrap = document.createElement('div');
+        wrap.innerHTML = renderMatchGroup({ ref }, terms);
+        frag.appendChild(wrap.firstElementChild);
       });
+      moreBtn.before(frag);
+      moreBtn.remove();
+      return;
     }
-  }
 
-  // ── Input handler ─────────────────────────────────────────────
-  let debounceTimer;
-  input.addEventListener('input', () => {
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      const q = input.value.trim();
-      if (!q) {
-        container.innerHTML = `
-          <div class="state">
-            <div class="state-icon">🎙️</div>
-            <p class="state-title">Start typing to search</p>
-            <p class="state-body">${statusEl.textContent}</p>
-          </div>`;
-        metaEl.textContent = '';
-        return;
-      }
-      const t0 = performance.now();
-      allResults = search(q);
-      const elapsed = (performance.now() - t0).toFixed(1);
-      page = 0;
-      renderBatch(allResults, getMatchedTerms(allResults), false);
-      metaEl.textContent = allResults.length > 0 ? `${allResults.length} · ${elapsed}ms` : `0 results`;
-    }, 180);
+    // Timestamp copy-to-clipboard
+    const tsEl = e.target.closest('.ctx-ts');
+    if (!tsEl) return;
+    const ts = tsEl.dataset.ts;
+    try {
+      await navigator.clipboard.writeText(ts);
+    } catch {
+      const range = document.createRange();
+      range.selectNodeContents(tsEl);
+      window.getSelection()?.removeAllRanges();
+      window.getSelection()?.addRange(range);
+    }
+    tsEl.dataset.copied = '1';
+    setTimeout(() => delete tsEl.dataset.copied, 1600);
+  });
+
+  // Keyboard-activate timestamps
+  container.addEventListener('keydown', e => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.closest('.ctx-ts')) {
+      e.preventDefault(); e.target.click();
+    }
   });
 
 })();

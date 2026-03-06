@@ -28,6 +28,7 @@ Manifest structure:
 """
 
 import re
+import html as html_mod
 import json
 import sys
 from pathlib import Path
@@ -57,7 +58,9 @@ def parse_srt(filepath: Path) -> list[dict]:
         if not ts_match:
             continue
         start_ts = ts_match.group(1)
-        text_content = " ".join(line.strip() for line in lines[2:] if line.strip())
+        raw_text = " ".join(line.strip() for line in lines[2:] if line.strip())
+        text_content = re.sub(r"<[^>]+>", "", raw_text)
+        text_content = html_mod.unescape(text_content).strip()
         if text_content:
             blocks.append({"s": start_ts, "t": text_content})
     return blocks
