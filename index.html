@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Podcast Transcript Search</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,400&family=IBM+Plex+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;1,9..144,300&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/lunr.js/2.3.9/lunr.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #141210;
+      --surface:   #1e1a17;
+      --border:    #2e2820;
+      --border-hi: #4a3e30;
+      --amber:     #e8a435;
+      --amber-dim: #a0711f;
+      --amber-glow:#e8a43522;
+      --cream:     #f0e6d0;
+      --muted:     #7a6e60;
+      --text:      #cfc4b4;
+      --match-bg:  #2a2015;
+      --match-hl:  #e8a43530;
+      --radius:    6px;
+    }
+
+    html { font-size: 16px; scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Fraunces', Georgia, serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ─── Noise texture overlay ─── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.5;
+    }
+
+    /* ─── Header ─── */
+    header {
+      position: relative;
+      z-index: 1;
+      border-bottom: 1px solid var(--border);
+      padding: 3rem 2rem 2.5rem;
+      text-align: center;
+    }
+
+    .header-eyebrow {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.7rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--amber);
+      margin-bottom: 0.75rem;
+    }
+
+    h1 {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: clamp(2rem, 5vw, 3.5rem);
+      font-weight: 700;
+      color: var(--cream);
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+    }
+
+    h1 em {
+      font-style: italic;
+      color: var(--amber);
+    }
+
+    .header-sub {
+      margin-top: 0.75rem;
+      color: var(--muted);
+      font-style: italic;
+      font-size: 1rem;
+      font-weight: 300;
+    }
+
+    /* ─── Search bar ─── */
+    .search-wrap {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 1.5rem;
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      backdrop-filter: blur(8px);
+    }
+
+    .search-icon {
+      color: var(--amber-dim);
+      flex-shrink: 0;
+      width: 18px;
+      height: 18px;
+    }
+
+    #search-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--cream);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 1rem;
+      caret-color: var(--amber);
+    }
+
+    #search-input::placeholder { color: var(--muted); }
+
+    .search-meta {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.72rem;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    /* ─── Main layout ─── */
+    main {
+      position: relative;
+      z-index: 1;
+      max-width: 860px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 2rem 1.5rem 4rem;
+      flex: 1;
+    }
+
+    /* ─── States ─── */
+    .state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 5rem 2rem;
+      color: var(--muted);
+      text-align: center;
+      animation: fadeIn 0.3s ease;
+    }
+
+    .state-icon {
+      font-size: 2.5rem;
+      opacity: 0.4;
+    }
+
+    .state-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.2rem;
+      font-style: italic;
+      color: var(--text);
+    }
+
+    .state-body {
+      font-size: 0.9rem;
+      font-family: 'IBM Plex Mono', monospace;
+    }
+
+    /* ─── Results ─── */
+    .results-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 1.25rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .results-count {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.75rem;
+      color: var(--amber);
+      letter-spacing: 0.05em;
+    }
+
+    .results-query {
+      font-style: italic;
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+
+    .results-list {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+
+    /* ─── Result card ─── */
+    .result-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      animation: slideUp 0.25s ease backwards;
+    }
+
+    .result-card:hover {
+      border-color: var(--border-hi);
+    }
+
+    .result-card + .result-card {
+      margin-top: 0.75rem;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.65rem 1rem;
+      border-bottom: 1px solid var(--border);
+      background: #1a1510;
+    }
+
+    .episode-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--amber);
+      flex-shrink: 0;
+    }
+
+    .episode-name {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.78rem;
+      color: var(--amber);
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .episode-ts {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.7rem;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+
+    .context-blocks {
+      padding: 0.75rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .context-block {
+      display: flex;
+      gap: 0.75rem;
+      padding: 0.45rem 0.5rem;
+      border-radius: 3px;
+      transition: background 0.15s;
+    }
+
+    .context-block.is-match {
+      background: var(--match-hl);
+      border-left: 2px solid var(--amber);
+      padding-left: 0.625rem;
+    }
+
+    .block-ts {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.65rem;
+      color: var(--muted);
+      flex-shrink: 0;
+      padding-top: 0.1em;
+      width: 5.5rem;
+      text-align: right;
+    }
+
+    .block-text {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.82rem;
+      line-height: 1.6;
+      color: var(--text);
+    }
+
+    .context-block.is-match .block-text {
+      color: var(--cream);
+    }
+
+    mark {
+      background: var(--amber-glow);
+      color: var(--amber);
+      border-radius: 2px;
+      padding: 0 2px;
+      font-weight: 500;
+    }
+
+    /* ─── Load more ─── */
+    .load-more-wrap {
+      margin-top: 2rem;
+      text-align: center;
+    }
+
+    #load-more-btn {
+      background: transparent;
+      border: 1px solid var(--border-hi);
+      color: var(--amber);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.78rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      padding: 0.6rem 1.5rem;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s;
+    }
+
+    #load-more-btn:hover {
+      background: var(--amber-glow);
+      border-color: var(--amber-dim);
+    }
+
+    /* ─── Footer ─── */
+    footer {
+      position: relative;
+      z-index: 1;
+      border-top: 1px solid var(--border);
+      padding: 1.25rem;
+      text-align: center;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.68rem;
+      color: var(--muted);
+    }
+
+    /* ─── Animations ─── */
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ─── Responsive ─── */
+    @media (max-width: 600px) {
+      header { padding: 2rem 1.25rem 1.75rem; }
+      .block-ts { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <p class="header-eyebrow">Transcript Archive</p>
+  <h1>Search the <em>Archive</em></h1>
+  <p class="header-sub">Full-text search across all podcast transcripts</p>
+</header>
+
+<div class="search-wrap">
+  <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+  </svg>
+  <input
+    id="search-input"
+    type="search"
+    placeholder="Search transcripts…"
+    autocomplete="off"
+    spellcheck="false"
+  />
+  <span class="search-meta" id="search-meta"></span>
+</div>
+
+<main>
+  <div id="results-container">
+    <div class="state" id="idle-state">
+      <div class="state-icon">🎙️</div>
+      <p class="state-title">Start typing to search</p>
+      <p class="state-body" id="index-status">Loading index…</p>
+    </div>
+  </div>
+</main>
+
+<footer>
+  Client-side full-text search · Powered by Lunr.js · No data leaves your browser
+</footer>
+
+<script>
+(async () => {
+  const input      = document.getElementById('search-input');
+  const container  = document.getElementById('results-container');
+  const metaEl     = document.getElementById('search-meta');
+  const statusEl   = document.getElementById('index-status');
+
+  const PAGE_SIZE = 20;
+  let lunrIndex   = null;
+  let docsMap     = {};     // id → full entry
+  let allResults  = [];     // current result set
+  let page        = 0;
+
+  // ── Load & index ──────────────────────────────────────────────
+  try {
+    const resp = await fetch('search-data.json');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const docs = await resp.json();
+
+    // Build lookup map
+    docs.forEach(d => { docsMap[d.id] = d; });
+
+    // Build Lunr index
+    lunrIndex = lunr(function () {
+      this.ref('id');
+      this.field('text',    { boost: 10 });
+      this.field('episode', { boost: 3  });
+      this.metadataWhitelist = ['position'];
+
+      docs.forEach(d => this.add(d));
+    });
+
+    const fileCount = new Set(docs.map(d => d.file)).size;
+    statusEl.textContent = `${docs.length.toLocaleString()} blocks · ${fileCount} episodes`;
+    input.placeholder = `Search ${fileCount} podcast transcripts…`;
+    input.disabled = false;
+    input.focus();
+  } catch (err) {
+    statusEl.textContent = '⚠ Could not load search-data.json';
+    console.error('Search index load error:', err);
+  }
+
+  // ── Search ────────────────────────────────────────────────────
+  function search(query) {
+    if (!lunrIndex || !query.trim()) return [];
+    try {
+      // Try exact phrase first, fall back to individual terms with wildcard
+      let results = lunrIndex.search(query);
+      if (results.length === 0) {
+        const terms = query.trim().split(/\s+/).map(t => `${t}*`).join(' ');
+        results = lunrIndex.search(terms);
+      }
+      return results;
+    } catch {
+      return [];
+    }
+  }
+
+  // ── Highlight matched terms in text ───────────────────────────
+  function highlight(text, terms) {
+    if (!terms || terms.length === 0) return escapeHtml(text);
+    const pattern = terms.map(t => escapeRe(t)).join('|');
+    const re = new RegExp(`(${pattern})`, 'gi');
+    return escapeHtml(text).replace(re, '<mark>$1</mark>');
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+  function escapeRe(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  // ── Render a batch of results ─────────────────────────────────
+  function renderBatch(results, terms, append = false) {
+    if (!append) {
+      container.innerHTML = '';
+      if (results.length === 0) {
+        container.innerHTML = `
+          <div class="state">
+            <div class="state-icon">🔍</div>
+            <p class="state-title">No results found</p>
+            <p class="state-body">Try different keywords or a shorter phrase</p>
+          </div>`;
+        return;
+      }
+      // Header
+      const hdr = document.createElement('div');
+      hdr.className = 'results-header';
+      hdr.innerHTML = `
+        <span class="results-count">${results.length.toLocaleString()} result${results.length !== 1 ? 's' : ''}</span>
+        <span class="results-query">"${escapeHtml(input.value.trim())}"</span>`;
+      container.appendChild(hdr);
+
+      const list = document.createElement('div');
+      list.className = 'results-list';
+      list.id = 'results-list';
+      container.appendChild(list);
+    }
+
+    const list = container.querySelector('#results-list');
+    const batch = results.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+    batch.forEach((r, idx) => {
+      const doc = docsMap[r.ref];
+      if (!doc) return;
+
+      const card = document.createElement('div');
+      card.className = 'result-card';
+      card.style.animationDelay = `${idx * 20}ms`;
+
+      const contextHtml = doc.context.map(blk => `
+        <div class="context-block ${blk.isMatch ? 'is-match' : ''}">
+          <span class="block-ts">${blk.start.substring(0,8)}</span>
+          <span class="block-text">${blk.isMatch ? highlight(blk.text, terms) : escapeHtml(blk.text)}</span>
+        </div>`).join('');
+
+      card.innerHTML = `
+        <div class="card-header">
+          <span class="episode-dot"></span>
+          <span class="episode-name">${escapeHtml(doc.episode)}</span>
+          <span class="episode-ts">${doc.start.substring(0,8)}</span>
+        </div>
+        <div class="context-blocks">${contextHtml}</div>`;
+
+      list.appendChild(card);
+    });
+
+    // Load more button
+    const existingBtn = document.getElementById('load-more-btn');
+    if (existingBtn) existingBtn.parentElement.remove();
+
+    const hasMore = (page + 1) * PAGE_SIZE < results.length;
+    if (hasMore) {
+      const wrap = document.createElement('div');
+      wrap.className = 'load-more-wrap';
+      wrap.innerHTML = `<button id="load-more-btn">Load more results</button>`;
+      container.appendChild(wrap);
+      document.getElementById('load-more-btn').addEventListener('click', () => {
+        page++;
+        renderBatch(allResults, terms, true);
+      });
+    }
+  }
+
+  // ── Extract matched terms for highlighting ────────────────────
+  function getMatchedTerms(results) {
+    const terms = new Set();
+    results.slice(0, PAGE_SIZE).forEach(r => {
+      if (r.matchData && r.matchData.metadata) {
+        Object.keys(r.matchData.metadata).forEach(t => terms.add(t));
+      }
+    });
+    return [...terms];
+  }
+
+  // ── Debounced input handler ───────────────────────────────────
+  let debounceTimer;
+  input.addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      const q = input.value.trim();
+      if (!q) {
+        container.innerHTML = `
+          <div class="state" id="idle-state">
+            <div class="state-icon">🎙️</div>
+            <p class="state-title">Start typing to search</p>
+            <p class="state-body">${statusEl ? statusEl.textContent : ''}</p>
+          </div>`;
+        metaEl.textContent = '';
+        return;
+      }
+
+      const t0 = performance.now();
+      allResults = search(q);
+      const elapsed = (performance.now() - t0).toFixed(1);
+      page = 0;
+
+      const terms = getMatchedTerms(allResults);
+      renderBatch(allResults, terms, false);
+
+      metaEl.textContent = allResults.length > 0
+        ? `${allResults.length} · ${elapsed}ms`
+        : `0 results`;
+    }, 180);
+  });
+
+})();
+</script>
+</body>
+</html>
