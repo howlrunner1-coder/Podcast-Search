@@ -1,25 +1,35 @@
 #!/usr/bin/env python3
 """
 build_index.py
-Parses all .srt files in ./subtitles/ and outputs search-data.json
-for use with the static podcast search UI.
+Parses all .srt files in ./subtitles/ and outputs search-data.json.
+
+Structure (no context duplication):
+  {
+    "episodes": {
+      "ep001.srt": { "name": "ep001 the pilot", "blocks": [{"s":"00:00:01","t":"text"}, ...] }
+    },
+    "entries": [
+      {"id":"ep001.srt::0", "f":"ep001.srt", "e":"ep001 the pilot", "t":"text"},
+      ...
+    ]
+  }
+
+Context is reconstructed at search time from the episodes map using the block
+index encoded in the entry ID, so no text is ever stored more than once.
 """
 
-import os
 import re
 import json
 import sys
 from pathlib import Path
 
 SUBTITLES_DIR = Path("subtitles")
-OUTPUT_FILE = Path("search-data.json")
-CONTEXT_WINDOW = 2  # number of blocks before/after a match to include as context
+OUTPUT_FILE   = Path("search-data.json")
 
 
 def parse_srt(filepath: Path) -> list[dict]:
-    """Parse an SRT file into a list of subtitle blocks."""
+    """Parse an SRT file into a compact list of {s: start, t: text} blocks."""
     text = filepath.read_text(encoding="utf-8", errors="replace")
-    # Split on double newline (block separator)
     raw_blocks = re.split(r"\n\s*\n", text.strip())
 
     blocks = []
@@ -28,96 +38,41 @@ def parse_srt(filepath: Path) -> list[dict]:
         if len(lines) < 2:
             continue
 
-        # First line should be the block index number
+        # Line 0: block counter (skip if not an integer)
         try:
-            block_num = int(lines[0].strip())
+            int(lines[0].strip())
         except ValueError:
             continue
 
-        # Second line should be the timestamp
-        timestamp_match = re.match(
-            r"(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{3})",
+        # Line 1: timestamp
+        ts_match = re.match(
+            r"(\d{2}:\d{2}:\d{2})[,\.](\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2})[,\.]",
             lines[1].strip(),
         )
-        if not timestamp_match:
+        if not ts_match:
             continue
 
-        start_ts = timestamp_match.group(1).replace(",", ".")
-        end_ts = timestamp_match.group(2).replace(",", ".")
+        # Store HH:MM:SS only — milliseconds waste space and aren't needed for display
+        start_ts = ts_match.group(1)
 
-        # Remaining lines are the subtitle text
-        text_lines = lines[2:]
-        text_content = " ".join(line.strip() for line in text_lines if line.strip())
-
+        text_content = " ".join(
+            line.strip() for line in lines[2:] if line.strip()
+        )
         if not text_content:
             continue
 
-        blocks.append(
-            {
-                "num": block_num,
-                "start": start_ts,
-                "end": end_ts,
-                "text": text_content,
-            }
-        )
+        blocks.append({"s": start_ts, "t": text_content})
 
     return blocks
 
 
-def derive_episode_name(filepath: Path) -> str:
-    """Turn a filename like 'ep042_my_great_episode.srt' into 'ep042 my great episode'."""
-    stem = filepath.stem
-    return stem.replace("_", " ").replace("-", " ")
-
-
-def build_search_entries(filepath: Path) -> list[dict]:
-    """
-    Build flat search entries from an SRT file.
-    Each entry includes the matched block plus surrounding context blocks.
-    """
-    blocks = parse_srt(filepath)
-    if not blocks:
-        return []
-
-    episode = derive_episode_name(filepath)
-    filename = filepath.name
-    entries = []
-
-    for i, block in enumerate(blocks):
-        # Gather context: up to CONTEXT_WINDOW blocks before and after
-        ctx_start = max(0, i - CONTEXT_WINDOW)
-        ctx_end = min(len(blocks) - 1, i + CONTEXT_WINDOW)
-
-        context_blocks = []
-        for j in range(ctx_start, ctx_end + 1):
-            context_blocks.append(
-                {
-                    "start": blocks[j]["start"],
-                    "end": blocks[j]["end"],
-                    "text": blocks[j]["text"],
-                    "isMatch": j == i,
-                }
-            )
-
-        entries.append(
-            {
-                # Unique ID for Lunr: filename + block index
-                "id": f"{filename}::{i}",
-                "file": filename,
-                "episode": episode,
-                "start": block["start"],
-                "text": block["text"],
-                "context": context_blocks,
-            }
-        )
-
-    return entries
+def episode_name(filepath: Path) -> str:
+    return filepath.stem.replace("_", " ").replace("-", " ")
 
 
 def main():
     if not SUBTITLES_DIR.exists():
         print(f"Error: '{SUBTITLES_DIR}' directory not found.", file=sys.stderr)
-        print("Create a 'subtitles/' directory and place your .srt files inside it.")
         sys.exit(1)
 
     srt_files = sorted(SUBTITLES_DIR.glob("**/*.srt"))
@@ -125,18 +80,40 @@ def main():
         print(f"No .srt files found in '{SUBTITLES_DIR}'.", file=sys.stderr)
         sys.exit(1)
 
-    all_entries = []
-    for srt_file in srt_files:
-        entries = build_search_entries(srt_file)
-        all_entries.extend(entries)
-        print(f"  Parsed {srt_file.name}: {len(entries)} blocks")
+    episodes = {}   # filename → {name, blocks}
+    entries  = []   # flat list for Lunr
 
+    for srt_file in srt_files:
+        blocks = parse_srt(srt_file)
+        if not blocks:
+            print(f"  Skipped {srt_file.name}: no parseable blocks")
+            continue
+
+        fname  = srt_file.name
+        ename  = episode_name(srt_file)
+
+        # Store each episode's blocks once
+        episodes[fname] = {"name": ename, "blocks": blocks}
+
+        # Flat searchable entries — id encodes file + block index for context lookup
+        for i, blk in enumerate(blocks):
+            entries.append({
+                "id": f"{fname}::{i}",
+                "f":  fname,
+                "e":  ename,
+                "t":  blk["t"],
+            })
+
+        print(f"  Parsed {fname}: {len(blocks)} blocks")
+
+    output = {"episodes": episodes, "entries": entries}
     OUTPUT_FILE.write_text(
-        json.dumps(all_entries, ensure_ascii=False, separators=(",", ":")),
+        json.dumps(output, ensure_ascii=False, separators=(",", ":")),
         encoding="utf-8",
     )
 
-    print(f"\n✓ Wrote {len(all_entries)} entries from {len(srt_files)} files → {OUTPUT_FILE}")
+    size_mb = OUTPUT_FILE.stat().st_size / 1_048_576
+    print(f"\n✓ {len(entries)} entries · {len(episodes)} episodes → {OUTPUT_FILE} ({size_mb:.1f} MB)")
 
 
 if __name__ == "__main__":

@@ -394,39 +394,41 @@
 
 <script>
 (async () => {
-  const input      = document.getElementById('search-input');
-  const container  = document.getElementById('results-container');
-  const metaEl     = document.getElementById('search-meta');
-  const statusEl   = document.getElementById('index-status');
+  const input     = document.getElementById('search-input');
+  const container = document.getElementById('results-container');
+  const metaEl    = document.getElementById('search-meta');
+  const statusEl  = document.getElementById('index-status');
 
-  const PAGE_SIZE = 20;
-  let lunrIndex   = null;
-  let docsMap     = {};     // id → full entry
-  let allResults  = [];     // current result set
+  const PAGE_SIZE    = 20;
+  const CTX_WINDOW   = 2;   // blocks before/after match to show
+
+  let lunrIndex  = null;
+  let episodesMap = {};  // filename → { name, blocks: [{s,t}] }
+  let entriesMap  = {};  // id → { f, e, t }
+  let allResults  = [];
   let page        = 0;
 
   // ── Load & index ──────────────────────────────────────────────
   try {
     const resp = await fetch('search-data.json');
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const docs = await resp.json();
+    const data = await resp.json();
 
-    // Build lookup map
-    docs.forEach(d => { docsMap[d.id] = d; });
+    episodesMap = data.episodes;
+    data.entries.forEach(e => { entriesMap[e.id] = e; });
 
-    // Build Lunr index
+    // Build Lunr index from flat entries (fields: t=text, e=episode)
     lunrIndex = lunr(function () {
       this.ref('id');
-      this.field('text',    { boost: 10 });
-      this.field('episode', { boost: 3  });
+      this.field('t', { boost: 10 });
+      this.field('e', { boost: 3  });
       this.metadataWhitelist = ['position'];
-
-      docs.forEach(d => this.add(d));
+      data.entries.forEach(e => this.add(e));
     });
 
-    const fileCount = new Set(docs.map(d => d.file)).size;
-    statusEl.textContent = `${docs.length.toLocaleString()} blocks · ${fileCount} episodes`;
-    input.placeholder = `Search ${fileCount} podcast transcripts…`;
+    const epCount = Object.keys(episodesMap).length;
+    statusEl.textContent = `${data.entries.length.toLocaleString()} blocks · ${epCount} episodes`;
+    input.placeholder = `Search ${epCount} podcast transcripts…`;
     input.disabled = false;
     input.focus();
   } catch (err) {
@@ -434,30 +436,43 @@
     console.error('Search index load error:', err);
   }
 
+  // ── Context lookup ────────────────────────────────────────────
+  // The entry ID is "filename::blockIndex" — use that to slice the episode's
+  // blocks array for surrounding context. No duplication in the JSON needed.
+  function getContext(entryId) {
+    const sep = entryId.lastIndexOf('::');
+    const fname = entryId.substring(0, sep);
+    const idx   = parseInt(entryId.substring(sep + 2), 10);
+    const ep    = episodesMap[fname];
+    if (!ep) return [];
+
+    const start = Math.max(0, idx - CTX_WINDOW);
+    const end   = Math.min(ep.blocks.length - 1, idx + CTX_WINDOW);
+    return ep.blocks.slice(start, end + 1).map((blk, offset) => ({
+      ...blk,
+      isMatch: (start + offset) === idx,
+    }));
+  }
+
   // ── Search ────────────────────────────────────────────────────
   function search(query) {
     if (!lunrIndex || !query.trim()) return [];
     try {
-      // Try exact phrase first, fall back to individual terms with wildcard
       let results = lunrIndex.search(query);
       if (results.length === 0) {
         const terms = query.trim().split(/\s+/).map(t => `${t}*`).join(' ');
         results = lunrIndex.search(terms);
       }
       return results;
-    } catch {
-      return [];
-    }
+    } catch { return []; }
   }
 
-  // ── Highlight matched terms in text ───────────────────────────
+  // ── Highlight ─────────────────────────────────────────────────
   function highlight(text, terms) {
-    if (!terms || terms.length === 0) return escapeHtml(text);
-    const pattern = terms.map(t => escapeRe(t)).join('|');
-    const re = new RegExp(`(${pattern})`, 'gi');
+    if (!terms || !terms.length) return escapeHtml(text);
+    const re = new RegExp(`(${terms.map(escapeRe).join('|')})`, 'gi');
     return escapeHtml(text).replace(re, '<mark>$1</mark>');
   }
-
   function escapeHtml(s) {
     return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
@@ -465,11 +480,20 @@
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
-  // ── Render a batch of results ─────────────────────────────────
+  function getMatchedTerms(results) {
+    const terms = new Set();
+    results.slice(0, PAGE_SIZE).forEach(r => {
+      if (r.matchData?.metadata)
+        Object.keys(r.matchData.metadata).forEach(t => terms.add(t));
+    });
+    return [...terms];
+  }
+
+  // ── Render ────────────────────────────────────────────────────
   function renderBatch(results, terms, append = false) {
     if (!append) {
       container.innerHTML = '';
-      if (results.length === 0) {
+      if (!results.length) {
         container.innerHTML = `
           <div class="state">
             <div class="state-icon">🔍</div>
@@ -478,54 +502,50 @@
           </div>`;
         return;
       }
-      // Header
       const hdr = document.createElement('div');
       hdr.className = 'results-header';
       hdr.innerHTML = `
         <span class="results-count">${results.length.toLocaleString()} result${results.length !== 1 ? 's' : ''}</span>
         <span class="results-query">"${escapeHtml(input.value.trim())}"</span>`;
       container.appendChild(hdr);
-
       const list = document.createElement('div');
       list.className = 'results-list';
       list.id = 'results-list';
       container.appendChild(list);
     }
 
-    const list = container.querySelector('#results-list');
+    const list  = container.querySelector('#results-list');
     const batch = results.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
     batch.forEach((r, idx) => {
-      const doc = docsMap[r.ref];
-      if (!doc) return;
+      const entry   = entriesMap[r.ref];
+      if (!entry) return;
+      const context = getContext(r.ref);
 
       const card = document.createElement('div');
       card.className = 'result-card';
       card.style.animationDelay = `${idx * 20}ms`;
 
-      const contextHtml = doc.context.map(blk => `
+      const ctxHtml = context.map(blk => `
         <div class="context-block ${blk.isMatch ? 'is-match' : ''}">
-          <span class="block-ts">${blk.start.substring(0,8)}</span>
-          <span class="block-text">${blk.isMatch ? highlight(blk.text, terms) : escapeHtml(blk.text)}</span>
+          <span class="block-ts">${blk.s}</span>
+          <span class="block-text">${blk.isMatch ? highlight(blk.t, terms) : escapeHtml(blk.t)}</span>
         </div>`).join('');
 
       card.innerHTML = `
         <div class="card-header">
           <span class="episode-dot"></span>
-          <span class="episode-name">${escapeHtml(doc.episode)}</span>
-          <span class="episode-ts">${doc.start.substring(0,8)}</span>
+          <span class="episode-name">${escapeHtml(entry.e)}</span>
+          <span class="episode-ts">${context.find(b => b.isMatch)?.s ?? ''}</span>
         </div>
-        <div class="context-blocks">${contextHtml}</div>`;
+        <div class="context-blocks">${ctxHtml}</div>`;
 
       list.appendChild(card);
     });
 
-    // Load more button
-    const existingBtn = document.getElementById('load-more-btn');
-    if (existingBtn) existingBtn.parentElement.remove();
-
-    const hasMore = (page + 1) * PAGE_SIZE < results.length;
-    if (hasMore) {
+    // Load more
+    document.getElementById('load-more-btn')?.parentElement.remove();
+    if ((page + 1) * PAGE_SIZE < results.length) {
       const wrap = document.createElement('div');
       wrap.className = 'load-more-wrap';
       wrap.innerHTML = `<button id="load-more-btn">Load more results</button>`;
@@ -537,18 +557,7 @@
     }
   }
 
-  // ── Extract matched terms for highlighting ────────────────────
-  function getMatchedTerms(results) {
-    const terms = new Set();
-    results.slice(0, PAGE_SIZE).forEach(r => {
-      if (r.matchData && r.matchData.metadata) {
-        Object.keys(r.matchData.metadata).forEach(t => terms.add(t));
-      }
-    });
-    return [...terms];
-  }
-
-  // ── Debounced input handler ───────────────────────────────────
+  // ── Input handler ─────────────────────────────────────────────
   let debounceTimer;
   input.addEventListener('input', () => {
     clearTimeout(debounceTimer);
@@ -556,26 +565,20 @@
       const q = input.value.trim();
       if (!q) {
         container.innerHTML = `
-          <div class="state" id="idle-state">
+          <div class="state">
             <div class="state-icon">🎙️</div>
             <p class="state-title">Start typing to search</p>
-            <p class="state-body">${statusEl ? statusEl.textContent : ''}</p>
+            <p class="state-body">${statusEl.textContent}</p>
           </div>`;
         metaEl.textContent = '';
         return;
       }
-
       const t0 = performance.now();
       allResults = search(q);
       const elapsed = (performance.now() - t0).toFixed(1);
       page = 0;
-
-      const terms = getMatchedTerms(allResults);
-      renderBatch(allResults, terms, false);
-
-      metaEl.textContent = allResults.length > 0
-        ? `${allResults.length} · ${elapsed}ms`
-        : `0 results`;
+      renderBatch(allResults, getMatchedTerms(allResults), false);
+      metaEl.textContent = allResults.length > 0 ? `${allResults.length} · ${elapsed}ms` : `0 results`;
     }, 180);
   });
 
